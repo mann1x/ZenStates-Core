@@ -23,6 +23,7 @@ namespace ZenStates.Core
             TYPE_CPU1 = 0x1,
             TYPE_CPU2 = 0x2,
             TYPE_CPU3 = 0x3,
+            TYPE_CPU4 = 0x4,
             TYPE_CPU9 = 0x9,
             TYPE_APU0 = 0x10,
             TYPE_APU1 = 0x11,
@@ -310,20 +311,23 @@ namespace ZenStates.Core
             Rsmu.SMU_MSG_SetTDCVDDLimit = 0x54;
             Rsmu.SMU_MSG_SetEDCVDDLimit = 0x55;
             Rsmu.SMU_MSG_SetHTCLimit = 0x56;
+            Rsmu.SMU_MSG_GetFastestCoreofSocket = 0x59;
             Rsmu.SMU_MSG_SetPBOScalar = 0x58;
             Rsmu.SMU_MSG_GetPBOScalar = 0x6C;
-            //Rsmu.ReadBoostLimit = 0x6E;
+            Rsmu.SMU_MSG_ReadBoostLimit = 0x6E;
 
             // MP1
             Mp1Smu.SMU_ADDR_MSG = 0x3B10530;
             Mp1Smu.SMU_ADDR_RSP = 0x3B1057C;
             Mp1Smu.SMU_ADDR_ARG = 0x3B109C4;
 
+            Mp1Smu.SMU_MSG_SetToolsDramAddress = 0x6;
             Mp1Smu.SMU_MSG_EnableOcMode = 0x24;
             Mp1Smu.SMU_MSG_DisableOcMode = 0x25;
             Mp1Smu.SMU_MSG_SetOverclockFrequencyPerCore = 0x27;
             Mp1Smu.SMU_MSG_SetOverclockCpuVid = 0x28;
             Mp1Smu.SMU_MSG_SetPBOScalar = 0x2F;
+            Mp1Smu.SMU_MSG_GetSome1Clock = 0x39;
             Mp1Smu.SMU_MSG_SetEDCVDDLimit = 0x3C;
             Mp1Smu.SMU_MSG_SetTDCVDDLimit = 0x3B;
             Mp1Smu.SMU_MSG_SetPPTLimit = 0x3D;
@@ -369,6 +373,80 @@ namespace ZenStates.Core
             Mp1Smu.SMU_MSG_SetDldoPsmMargin = 0x35;
             Mp1Smu.SMU_MSG_SetAllDldoPsmMargin = 0x36;
             Mp1Smu.SMU_MSG_GetDldoPsmMargin = 0x48;
+        }
+    }
+
+    // Ryzen 7000 (Raphael)
+    // Seems to be similar to Zen2 and Zen3
+    public class Zen4Settings : Zen3Settings
+    {
+        public Zen4Settings()
+        {
+            SMU_TYPE = SmuType.TYPE_CPU4;
+
+            // RSMU
+            Rsmu.SMU_ADDR_MSG = 0x03B10524;
+            Rsmu.SMU_ADDR_RSP = 0x03B10570;
+            Rsmu.SMU_ADDR_ARG = 0x03B10A40;
+
+            Rsmu.SMU_MSG_TransferTableToDram = 0x3;
+            Rsmu.SMU_MSG_GetDramBaseAddress = 0x4;
+            Rsmu.SMU_MSG_GetTableVersion = 0x5;
+            Rsmu.SMU_MSG_EnableOcMode = 0x5D;
+            Rsmu.SMU_MSG_DisableOcMode = 0x5E;
+            Rsmu.SMU_MSG_SetOverclockFrequencyAllCores = 0x5F;
+            Rsmu.SMU_MSG_SetOverclockFrequencyPerCore = 0x60;
+            Rsmu.SMU_MSG_SetOverclockCpuVid = 0x61;
+            Rsmu.SMU_MSG_SetPPTLimit = 0x56;
+            Rsmu.SMU_MSG_SetTDCVDDLimit = 0x57;
+            Rsmu.SMU_MSG_SetEDCVDDLimit = 0x58;
+            Rsmu.SMU_MSG_SetHTCLimit = 0x59;
+            Rsmu.SMU_MSG_SetPBOScalar = 0x5B;
+            Rsmu.SMU_MSG_GetPBOScalar = 0x6D;
+
+            Rsmu.SMU_MSG_SetDldoPsmMargin = 0x6;
+            Rsmu.SMU_MSG_SetAllDldoPsmMargin = 0x7;
+            Rsmu.SMU_MSG_GetDldoPsmMargin = 0xD5;
+            Rsmu.SMU_MSG_GetLN2Mode = 0xDD;
+
+            // HSMP
+            Hsmp.SMU_ADDR_MSG = 0x3B10534;
+            Hsmp.SMU_ADDR_RSP = 0x3B10980;
+            Hsmp.SMU_ADDR_ARG = 0x3B109E0;
+            /*
+            Hsmp.GetInterfaceVersion = 0x3;
+            Hsmp.ReadSocketPower = 0x4;
+            Hsmp.WriteSocketPowerLimit = 0x5;
+            Hsmp.ReadSocketPowerLimit = 0x6;
+            Hsmp.ReadMaxSocketPowerLimit = 0x7;
+            Hsmp.WriteBoostLimit = 0x8;
+            Hsmp.WriteBoostLimitAllCores = 0x9;
+            Hsmp.ReadBoostLimit = 0xA;
+            Hsmp.ReadProchotStatus = 0xB;
+            Hsmp.SetXgmiLinkWidthRange = 0xC;
+            Hsmp.APBDisable = 0xD;
+            Hsmp.APBEnable = 0xE;
+            Hsmp.ReadCurrentFclkMemclk = 0xF;
+            Hsmp.ReadCclkFrequencyLimit = 0x10;
+            Hsmp.ReadSocketC0Residency = 0x11;
+            Hsmp.SetLclkDpmLevelRange = 0x12;
+            */
+            Hsmp.GetLclkDpmLevelRange = 0x13;
+            Hsmp.GetMaxDDRBandwidthAndUtilization = 0x14;
+            // Hsmp.Reserved = 0x15;
+            Hsmp.GetDIMMTempRangeAndRefreshRate = 0x16;
+            Hsmp.GetDIMMPowerConsumption = 0x17;
+            Hsmp.GetDIMMThermalSensor = 0x18;
+            Hsmp.PwrCurrentActiveFreqLimitSocket = 0x19;
+            Hsmp.PwrCurrentActiveFreqLimitCore = 0x1A;
+            Hsmp.PwrSviTelemetryAllRails = 0x1B;
+            Hsmp.GetSocketFreqRange = 0x1C;
+            Hsmp.GetCurrentIoBandwidth = 0x1D;
+            Hsmp.GetCurrentIoBandwidth = 0x1E;
+            Hsmp.SetGMI3LinkWidthRange = 0x1F;
+            Hsmp.ControlPcieLinkRate = 0x20;
+            Hsmp.PwrEfficiencyModeSelection = 0x21;
+            Hsmp.SetDfPstateRange = 0x22;
         }
     }
 
@@ -419,10 +497,22 @@ namespace ZenStates.Core
             Rsmu.SMU_MSG_SetOverclockCpuVid = 0x7F;
             Rsmu.SMU_MSG_GetPBOScalar = 0x68;
 
-            // MP1
+
+        // MP1
             Mp1Smu.SMU_ADDR_MSG = 0x03B10528;
             Mp1Smu.SMU_ADDR_RSP = 0x03B10564;
             Mp1Smu.SMU_ADDR_ARG = 0x03B10998;
+
+            Mp1Smu.SMU_MSG_SetPPTLimit = 0x1C;
+            Mp1Smu.SMU_MSG_SetPPTSlowTime = 0x1D;
+            Mp1Smu.SMU_MSG_SetPPTFastLimit = 0x1B;
+            Mp1Smu.SMU_MSG_SetTDCVDDLimit = 0x20;
+            Mp1Smu.SMU_MSG_SetTDCSOCLimit = 0x21;
+            Mp1Smu.SMU_MSG_SetSTAPMLimit = 0x1A;
+            Mp1Smu.SMU_MSG_SetSTAPMTime = 0x1E;
+            Mp1Smu.SMU_MSG_SetHTCLimit = 0x1F;
+
+            //Mp1Smu.SMU_MSG_GetSome1Clock = 0x39;
 
         }
     }
@@ -435,7 +525,7 @@ namespace ZenStates.Core
         }
     }
 
-    // Renoir, Cezanne
+    // Renoir, Cezanne, Rembrandt
     public class APUSettings1 : SMU
     {
         public APUSettings1()
@@ -462,6 +552,12 @@ namespace ZenStates.Core
             Rsmu.SMU_MSG_SetEDCSOCLimit = 0x3B;
             Rsmu.SMU_MSG_SetPBOScalar = 0x3F;
             Rsmu.SMU_MSG_GetPBOScalar = 0xF;
+            Rsmu.SMU_MSG_SetSTAPMLimit = 0x31;
+            Rsmu.SMU_MSG_GetMinGfxClk = 0xD;
+            Rsmu.SMU_MSG_GetMaxGfxClk = 0xE;
+            Rsmu.SMU_MSG_GetOverClockingSupport = 0x82;
+            Rsmu.SMU_MSG_GetPerformanceData = 0xB; //arg0 1?
+            Rsmu.SMU_MSG_GetCPUParameters = 0x42; //arg0 1?
 
             // MP1
             Mp1Smu.SMU_ADDR_MSG = 0x03B10528;
@@ -472,8 +568,21 @@ namespace ZenStates.Core
             Mp1Smu.SMU_MSG_DisableOcMode = 0x30;
             Mp1Smu.SMU_MSG_SetOverclockFrequencyPerCore = 0x32;
             Mp1Smu.SMU_MSG_SetOverclockCpuVid = 0x33;
-            Mp1Smu.SMU_MSG_SetHTCLimit = 0x3E;
+            //Mp1Smu.SMU_MSG_SetHTCLimit = 0x3E;
             Mp1Smu.SMU_MSG_SetPBOScalar = 0x49;
+
+            Mp1Smu.SMU_MSG_SetPPTLimit = 0x16;
+            Mp1Smu.SMU_MSG_SetPPTFastLimit = 0x15;
+            Mp1Smu.SMU_MSG_SetPPTSlowTime = 0x17;
+            Mp1Smu.SMU_MSG_SetPPTAPULimit = 0x21;
+            Mp1Smu.SMU_MSG_SetTDCVDDLimit = 0x1A;
+            Mp1Smu.SMU_MSG_SetTDCSOCLimit = 0x1B;
+            Mp1Smu.SMU_MSG_SetEDCVDDLimit = 0x1C;
+            Mp1Smu.SMU_MSG_SetEDCSOCLimit = 0x1D;
+            Mp1Smu.SMU_MSG_SetSTAPMLimit = 0x14;
+            Mp1Smu.SMU_MSG_SetSTAPMTime = 0x18;
+            Mp1Smu.SMU_MSG_SetHTCLimit = 0x19;
+
         }
     }
 
@@ -486,6 +595,15 @@ namespace ZenStates.Core
             Rsmu.SMU_MSG_GetDldoPsmMargin = 0xC3;
             Rsmu.SMU_MSG_SetGpuPsmMargin = 0x53;
             Rsmu.SMU_MSG_GetGpuPsmMargin = 0xC6;
+
+            Mp1Smu.SMU_MSG_SetDldoPsmMargin = 0x54;
+            Mp1Smu.SMU_MSG_SetAllDldoPsmMargin = 0x55;
+
+            // HSMP
+            Hsmp.SMU_ADDR_MSG = 0x03B1051C;
+            Hsmp.SMU_ADDR_RSP = 0x03B10568;
+            Hsmp.SMU_ADDR_ARG = 0x03B10590;
+
         }
     }
 
@@ -500,15 +618,25 @@ namespace ZenStates.Core
             Rsmu.SMU_MSG_GetDldoPsmMargin = 0x2F;
             Rsmu.SMU_MSG_SetGpuPsmMargin = 0xB7;
             Rsmu.SMU_MSG_GetGpuPsmMargin = 0x30;
+            Rsmu.SMU_MSG_SetPPTLimit = 0x16;
 
             // MP1
             // https://github.com/FlyGoat/RyzenAdj/blob/master/lib/nb_smu_ops.h#L45
             Mp1Smu.SMU_ADDR_MSG = 0x03B10528;
             Mp1Smu.SMU_ADDR_RSP = 0x03B10578;
             Mp1Smu.SMU_ADDR_ARG = 0x03B10998;
+
+            Mp1Smu.SMU_MSG_SetPPTAPULimit = 0x23;
         }
     }
 
+    public class APUSettings2_Vangogh : APUSettings2
+    {
+        public APUSettings2_Vangogh()
+        {
+            Mp1Smu.SMU_MSG_SetEDCVDDLimit = 0x1E;
+        }
+    }
     public class UnsupportedSettings : SMU
     {
         public UnsupportedSettings()
@@ -539,21 +667,21 @@ namespace ZenStates.Core
 
             // Zen3
             { Cpu.CodeName.Vermeer, new Zen3Settings() },
-            // Chagall is unknown for now
-            { Cpu.CodeName.Chagall, new UnsupportedSettings() },
+            { Cpu.CodeName.Chagall, new Zen3Settings() },
             { Cpu.CodeName.Milan, new Zen3Settings() },
 
             // APU
             { Cpu.CodeName.RavenRidge, new APUSettings0() },
+            { Cpu.CodeName.RavenRidge2, new APUSettings0() },
             { Cpu.CodeName.Dali, new APUSettings0() },
             { Cpu.CodeName.FireFlight, new APUSettings0() },
             { Cpu.CodeName.Picasso, new APUSettings0_Picasso() },
 
             { Cpu.CodeName.Renoir, new APUSettings1() },
             { Cpu.CodeName.Lucienne, new APUSettings1() },
-            { Cpu.CodeName.Cezanne, new APUSettings1() },
+            { Cpu.CodeName.Cezanne, new APUSettings1_Cezanne() },
 
-            { Cpu.CodeName.VanGogh, new APUSettings2() },
+            { Cpu.CodeName.VanGogh, new APUSettings2_Vangogh() },
             { Cpu.CodeName.Rembrandt, new APUSettings2() },
 
             { Cpu.CodeName.Unsupported, new UnsupportedSettings() },

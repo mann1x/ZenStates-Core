@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace ZenStates.Core.SMUCommands
+﻿namespace ZenStates.Core.SMUCommands
 {
     internal class GetPsmMarginSingleCore : BaseSMUCommand
     {
@@ -10,7 +8,11 @@ namespace ZenStates.Core.SMUCommands
             if (CanExecute())
             {
                 result.args[0] = coreMask & 0xfff00000;
-                result.status = smu.SendMp1Command(smu.Mp1Smu.SMU_MSG_GetDldoPsmMargin, ref result.args);
+
+                if (smu.Rsmu.SMU_MSG_GetDldoPsmMargin > 0)
+                    result.status = smu.SendRsmuCommand(smu.Rsmu.SMU_MSG_GetDldoPsmMargin, ref result.args);
+                else
+                    result.status = smu.SendMp1Command(smu.Mp1Smu.SMU_MSG_GetDldoPsmMargin, ref result.args);
             }
 
             return base.Execute();

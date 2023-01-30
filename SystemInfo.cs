@@ -17,30 +17,28 @@ namespace ZenStates.Core
 
             try
             {
-                var sc = new ServiceController("Winmgmt");
+                ServiceController sc = new ServiceController("Winmgmt");
                 if (sc.Status != ServiceControllerStatus.Running)
                     throw new ManagementException(@"Windows Management Instrumentation service is not running");
 
-                var scope = new ManagementScope(@"root\cimv2");
+                ManagementScope scope = new ManagementScope(@"root\cimv2");
                 scope.Connect();
 
                 if (!scope.IsConnected)
                     throw new ManagementException(@"Failed to connect to root\cimv2");
 
                 ManagementObjectSearcher searcher = new ManagementObjectSearcher("SELECT * FROM Win32_BaseBoard");
-                foreach (var obj in searcher.Get())
+                foreach (ManagementBaseObject obj in searcher.Get())
                 {
-                    var mo = (ManagementObject)obj;
-                    MbVendor = ((string)mo["Manufacturer"]).Trim();
-                    MbName = ((string)mo["Product"]).Trim();
+                    MbVendor = ((string)obj["Manufacturer"]).Trim();
+                    MbName = ((string)obj["Product"]).Trim();
                 }
                 searcher.Dispose();
 
                 searcher = new ManagementObjectSearcher("SELECT * FROM Win32_BIOS");
-                foreach (var obj in searcher.Get())
+                foreach (ManagementBaseObject obj in searcher.Get())
                 {
-                    var mo = (ManagementObject)obj;
-                    BiosVersion = ((string)mo["SMBIOSBIOSVersion"]).Trim();
+                    BiosVersion = ((string)obj["SMBIOSBIOSVersion"]).Trim();
                 }
                 searcher.Dispose();
             }
@@ -50,20 +48,20 @@ namespace ZenStates.Core
             }
         }
 
-        public string CpuName => cpuInfo.cpuName != null ? cpuInfo.cpuName : "N/A";
+        public string CpuName => cpuInfo.cpuName ?? "N/A";
         public string CodeName => cpuInfo.codeName.ToString();
         public uint CpuId => cpuInfo.cpuid;
         public uint Model => cpuInfo.model;
         public uint ExtendedModel => cpuInfo.extModel;
         public string PackageType => $"{cpuInfo.packageType} ({(int)cpuInfo.packageType})";
-        public int FusedCoreCount => (int)cpuInfo.cores;
-        public int PhysicalCoreCount => (int)cpuInfo.physicalCores;
-        public int NodesPerProcessor => (int)cpuInfo.cpuNodes;
-        public int Threads => (int)cpuInfo.logicalCores;
-        public bool SMT => (int)cpuInfo.threadsPerCore > 1;
-        public int CCDCount => (int)cpuInfo.ccds;
-        public int CCXCount => (int)cpuInfo.ccxs;
-        public int NumCoresInCCX => (int)cpuInfo.coresPerCcx;
+        public int FusedCoreCount => (int)cpuInfo.topology.cores;
+        public int PhysicalCoreCount => (int)cpuInfo.topology.physicalCores;
+        public int NodesPerProcessor => (int)cpuInfo.topology.cpuNodes;
+        public int Threads => (int)cpuInfo.topology.logicalCores;
+        public bool SMT => (int)cpuInfo.topology.threadsPerCore > 1;
+        public int CCDCount => (int)cpuInfo.topology.ccds;
+        public int CCXCount => (int)cpuInfo.topology.ccxs;
+        public int NumCoresInCCX => (int)cpuInfo.topology.coresPerCcx;
         public string MbVendor { get; private set; }
         public string MbName { get; private set; }
         public string BiosVersion { get; private set; }

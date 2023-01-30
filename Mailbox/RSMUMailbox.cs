@@ -32,5 +32,15 @@
         public uint SMU_MSG_GetDldoPsmMargin { get; set; } = 0x0;
         public uint SMU_MSG_SetGpuPsmMargin { get; set; } = 0x0;
         public uint SMU_MSG_GetGpuPsmMargin { get; set; } = 0x0;
+        public uint SMU_MSG_ReadBoostLimit { get; set; } = 0x0;
+        public uint SMU_MSG_GetFastestCoreofSocket { get; set; } = 0x0;
+        public uint SMU_MSG_GetLN2Mode { get; set; } = 0x0;
+        public uint SMU_MSG_SetSTAPMLimit { get; set; } = 0x0;
+        public uint SMU_MSG_SetPPTAPULimit { get; set; } = 0x0;
+        public uint SMU_MSG_GetCPUParameters { get; set; } = 0x0;
+        public uint SMU_MSG_GetPerformanceData { get; set; } = 0x0;
+        public uint SMU_MSG_GetOverClockingSupport { get; set; } = 0x0;
+        public uint SMU_MSG_GetMinGfxClk { get; set; } = 0x0;
+        public uint SMU_MSG_GetMaxGfxClk { get; set; } = 0x0;
     }
 }

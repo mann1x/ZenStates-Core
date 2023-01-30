@@ -2,6 +2,8 @@ using OpenHardwareMonitor.Hardware;
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace ZenStates.Core
 {
@@ -13,10 +15,8 @@ namespace ZenStates.Core
         private static ushort group0 = 0x0;
         private static ulong bitmask0 = (1 << 0);
         private GroupAffinity cpu0Affinity = new GroupAffinity(group0, bitmask0);
-        private double _estimatedTimeStampCounterFrequency;
-        private double _estimatedTimeStampCounterFrequencyError;
-        public bool HasTimeStampCounter;
-        public double TimeStampCounterFrequency;
+        public int baseClock = 0;
+        public int baseMulti = 0;
 
         public float ccd1Temp { get; private set; }
         public float ccd2Temp { get; private set; }
@@ -27,31 +27,9 @@ namespace ZenStates.Core
         public float cpuVsoc { get; private set; }
         public float cpuBusClock { get; private set; }
 
-        public const string VENDOR_AMD = "AuthenticAMD";
-        public const string VENDOR_HYGON = "HygonGenuine";
-        public const uint F17H_M01H_SVI = 0x0005A000;
-        public const uint F17H_M60H_SVI = 0x0006F000; // Renoir only?
-        public const uint F17H_M01H_SVI_TEL_PLANE0 = (F17H_M01H_SVI + 0xC);
-        public const uint F17H_M01H_SVI_TEL_PLANE1 = (F17H_M01H_SVI + 0x10);
-        public const uint F17H_M30H_SVI_TEL_PLANE0 = (F17H_M01H_SVI + 0x14);
-        public const uint F17H_M30H_SVI_TEL_PLANE1 = (F17H_M01H_SVI + 0x10);
-        public const uint F17H_M60H_SVI_TEL_PLANE0 = (F17H_M60H_SVI + 0x38);
-        public const uint F17H_M60H_SVI_TEL_PLANE1 = (F17H_M60H_SVI + 0x3C);
-        public const uint F17H_M70H_SVI_TEL_PLANE0 = (F17H_M01H_SVI + 0x10);
-        public const uint F17H_M70H_SVI_TEL_PLANE1 = (F17H_M01H_SVI + 0xC);
-        public const uint F19H_M21H_SVI_TEL_PLANE0 = (F17H_M01H_SVI + 0x10);
-        public const uint F19H_M21H_SVI_TEL_PLANE1 = (F17H_M01H_SVI + 0xC);
-        public const uint F17H_M70H_CCD_TEMP = 0x00059954;
-        public const uint THM_CUR_TEMP = 0x00059800;
-        public const uint THM_CUR_TEMP_RANGE_SEL_MASK = 0x80000;
-        public const uint F17H_PCI_CONTROL_REGISTER = 0x60;
-        public const uint MSR_PSTATE_0 = 0xC0010064;
-        public const uint MSR_PSTATE_CTL = 0xC0010062;
-        public const uint MSR_HWCR = 0xC0010015;
-        public const uint MSR_MPERF = 0x000000E7;
-        public const uint MSR_APERF = 0x000000E8;
-
-
+        public string teststring { get; private set; }
+        public string teststring1 { get; private set; }
+        public string teststring2 { get; private set; }
         public enum Family
         {
             UNSUPPORTED = 0x0,
@@ -70,6 +48,7 @@ namespace ZenStates.Core
             Whitehaven,
             Naples,
             RavenRidge,
+            RavenRidge2,
             PinnacleRidge,
             Colfax,
             Picasso,
@@ -86,6 +65,7 @@ namespace ZenStates.Core
             Cezanne,
             Rembrandt,
             Lucienne,
+            Raphael,
         };
 
 
@@ -108,7 +88,19 @@ namespace ZenStates.Core
             public uint coreAddress;
             public uint socAddress;
         }
-
+        public struct CpuTopology
+        {
+            public uint ccds;
+            public uint ccxs;
+            public uint coresPerCcx;
+            public uint cores;
+            public uint logicalCores;
+            public uint physicalCores;
+            public uint threadsPerCore;
+            public uint cpuNodes;
+            public uint? coreDisableMap;
+			public uint[] performanceOfCore;
+        }
         public struct CPUInfo
         {
             public uint cpuid;
@@ -120,20 +112,18 @@ namespace ZenStates.Core
             public uint baseModel;
             public uint extModel;
             public uint model;
-            public uint ccds;
-            public uint ccxs;
-            public uint coresPerCcx;
-            public uint cores;
-            public uint logicalCores;
-            public uint physicalCores;
-            public uint threadsPerCore;
-            public uint cpuNodes;
             public uint patchLevel;
-            public uint coreDisableMap;
+            public CpuTopology topology;
             public SVI2 svi2;
+            public AOD aod;
+            public bool TDCSupported;
+            public bool EDCSupported;
+            public bool THMSupported;
+
         }
 
         public readonly IOModule io = new IOModule();
+        private readonly ACPI_MMIO mmio;
         public readonly CPUInfo info;
         public readonly SystemInfo systemInfo;
         public readonly SMU smu;
@@ -142,6 +132,106 @@ namespace ZenStates.Core
         public IOModule.LibStatus Status { get; }
         public Exception LastError { get; }
 
+        private CpuTopology GetCpuTopology(Family family, CodeName codeName, uint model)
+        {
+            CpuTopology topology = new CpuTopology();
+
+            if (Opcode.Cpuid(0x00000001, 0, out uint eax, out uint ebx, out uint ecx, out uint edx))
+                topology.logicalCores = Utils.GetBits(ebx, 16, 8);
+            else
+                throw new ApplicationException(InitializationExceptionText);
+
+            if (Opcode.Cpuid(0x8000001E, 0, out eax, out ebx, out ecx, out edx))
+            {
+                topology.threadsPerCore = Utils.GetBits(ebx, 8, 4) + 1;
+                topology.cpuNodes = ((ecx >> 8) & 0x7) + 1;
+
+                if (topology.threadsPerCore == 0)
+                    topology.cores = topology.logicalCores;
+                else
+                    topology.cores = topology.logicalCores / topology.threadsPerCore;
+            }
+            else
+            {
+                throw new ApplicationException(InitializationExceptionText);
+            }
+            try
+            {
+                topology.performanceOfCore = new uint[topology.cores];
+
+                for (int i = 0; i < topology.logicalCores; i += (int)topology.threadsPerCore)
+                {
+                    if (Ring0.RdmsrTx(0xC00102B3, out eax, out edx, GroupAffinity.Single(0, i)))
+                        topology.performanceOfCore[i / topology.threadsPerCore] = eax & 0xff;
+                    else
+                        topology.performanceOfCore[i / topology.threadsPerCore] = 0;
+                }
+            }
+            catch { }
+
+            uint ccdsPresent = 0, ccdsDown = 0, coreFuse = 0;
+            uint fuse1 = 0x5D218;
+            uint fuse2 = 0x5D21C;
+            uint offset = 0x238;
+            uint ccxPerCcd = 2;
+
+            // Get CCD and CCX configuration
+            // https://gitlab.com/leogx9r/ryzen_smu/-/blob/master/userspace/monitor_cpu.c
+            if (family == Family.FAMILY_19H)
+            {
+                offset = 0x598;
+                ccxPerCcd = 1;
+                if (codeName == CodeName.Raphael)
+                {
+                    offset = 0x4D0;
+                    fuse1 += 0x1A4;
+                    fuse2 += 0x1A4;
+                }
+            }
+            else if (family == Family.FAMILY_17H && model != 0x71 && model != 0x31)
+            {
+                fuse1 += 0x40; // 0x5D258
+                fuse2 += 0x40; // 0x5D25C
+            }
+
+            if (ReadDwordEx(fuse1, ref ccdsPresent) && ReadDwordEx(fuse2, ref ccdsDown))
+            {
+                uint ccdEnableMap = Utils.GetBits(ccdsPresent, 22, 8);
+                uint ccdDisableMap = Utils.GetBits(ccdsPresent, 30, 2) | (Utils.GetBits(ccdsDown, 0, 6) << 2);
+                uint coreDisableMapAddress = 0x30081800 + offset;
+                uint enabledCcd = Utils.CountSetBits(ccdEnableMap);
+
+                topology.ccds = enabledCcd > 0 ? enabledCcd : 1;
+                topology.ccxs = topology.ccds * ccxPerCcd;
+                topology.physicalCores = topology.ccxs * 8 / ccxPerCcd;
+
+                if (ReadDwordEx(coreDisableMapAddress, ref coreFuse))
+                    topology.coresPerCcx = (8 - Utils.CountSetBits(coreFuse & 0xff)) / ccxPerCcd;
+                else
+                    Console.WriteLine("Could not read core fuse!");
+
+                uint ccdOffset = 0;
+
+                for (int i = 0; i < topology.ccds; i++)
+                {
+                    if (Utils.GetBits(ccdEnableMap, i, 1) == 1)
+                    {
+                        if (ReadDwordEx(coreDisableMapAddress | ccdOffset, ref coreFuse))
+                            topology.coreDisableMap |= (coreFuse & 0xff) << i * 8;
+                        else
+                            Console.WriteLine($"Could not read core fuse for CCD{i}!");
+                    }
+
+                    ccdOffset += 0x2000000;
+                }
+            }
+            else
+            {
+                Console.WriteLine("Could not read CCD fuse!");
+            }
+
+            return topology;
+        }
         public Cpu()
         {
             Ring0.Open();
@@ -154,14 +244,15 @@ namespace ZenStates.Core
                     sw.Write(errorReport);
                 }
 
-                throw new ApplicationException("Error opening WinRing kernel driver");
+                Console.WriteLine("Error opening WinRing kernel driver");
             }
 
             Opcode.Open();
+            mmio = new ACPI_MMIO(io);
 
             info.vendor = GetVendor();
-            if (info.vendor != VENDOR_AMD && info.vendor != VENDOR_HYGON)
-                throw new Exception("Not an AMD CPU");
+            if (info.vendor != Constants.VENDOR_AMD && info.vendor != Constants.VENDOR_HYGON)
+                Console.WriteLine("Not an AMD CPU");
 
             if (Opcode.Cpuid(0x00000001, 0, out uint eax, out uint ebx, out uint ecx, out uint edx))
             {
@@ -170,17 +261,11 @@ namespace ZenStates.Core
                 info.baseModel = (eax & 0xf0) >> 4;
                 info.extModel = (eax & 0xf0000) >> 12;
                 info.model = info.baseModel + info.extModel;
-                info.logicalCores = Utils.GetBits(ebx, 16, 8);
+                // info.logicalCores = Utils.GetBits(ebx, 16, 8);
             }
             else
             {
                 throw new ApplicationException(InitializationExceptionText);
-            }
-
-
-            if (Opcode.Cpuid(0x00000001, 0, out eax, out ebx, out ecx, out edx))
-            {
-                HasTimeStampCounter = (edx & 0x10) != 0;
             }
 
             // Package type
@@ -199,73 +284,10 @@ namespace ZenStates.Core
 
             info.cpuName = GetCpuName();
 
-            if (Opcode.Cpuid(0x8000001E, 0, out eax, out ebx, out ecx, out edx))
-            {
-                info.threadsPerCore = Utils.GetBits(ebx, 8, 4) + 1;
-                info.cpuNodes = ecx >> 8 & 0x7 + 1;
-
-                if (info.threadsPerCore == 0)
-                    info.cores = info.logicalCores;
-                else
-                    info.cores = info.logicalCores / info.threadsPerCore;
-            }
-            else
-            {
-                throw new ApplicationException(InitializationExceptionText);
-            }
-
             // Non-critical block
             try
             {
-                uint ccdsPresent = 0, ccdsDown = 0, coreFuse = 0;
-                uint fuse1 = 0x5D218;
-                uint fuse2 = 0x5D21C;
-                uint offset = 0x238;
-                uint ccxPerCcd = 2;
-
-                // Get CCD and CCX configuration
-                // https://gitlab.com/leogx9r/ryzen_smu/-/blob/master/userspace/monitor_cpu.c
-                if (info.family == Family.FAMILY_19H)
-                {
-                    offset = 0x598;
-                    ccxPerCcd = 1;
-                }
-                else if (info.family == Family.FAMILY_17H && info.model != 0x71 && info.model != 0x31)
-                {
-                    fuse1 += 0x40;
-                    fuse2 += 0x40;
-                }
-
-                if (!ReadDwordEx(fuse1, ref ccdsPresent) || !ReadDwordEx(fuse2, ref ccdsDown))
-                    throw new ApplicationException("Could not read CCD fuse!");
-
-                uint ccdEnableMap = Utils.GetBits(ccdsPresent, 22, 8);
-                uint ccdDisableMap = Utils.GetBits(ccdsPresent, 30, 2) | (Utils.GetBits(ccdsDown, 0, 6) << 2);
-                uint coreDisableMapAddress = 0x30081800 + offset;
-
-                info.ccds = Utils.CountSetBits(ccdEnableMap);
-                info.ccxs = info.ccds * ccxPerCcd;
-                info.physicalCores = info.ccxs * 8 / ccxPerCcd;
-
-                if (ReadDwordEx(coreDisableMapAddress, ref coreFuse))
-                    info.coresPerCcx = (8 - Utils.CountSetBits(coreFuse & 0xff)) / ccxPerCcd;
-                else
-                    throw new ApplicationException("Could not read core fuse!");
-
-                uint ccdOffset = 0;
-
-                for (int i = 0; i < info.ccds; i++)
-                {
-                    if (Utils.GetBits(ccdEnableMap, i, 1) == 1)
-                    {
-                        if (ReadDwordEx(coreDisableMapAddress | ccdOffset, ref coreFuse))
-                            info.coreDisableMap |= (coreFuse & 0xff) << i * 8;
-                        else
-                            throw new ApplicationException($"Could not read core fuse for CCD{i}!");
-                    }
-
-                    ccdOffset += 0x2000000;
-                }
+                info.topology = GetCpuTopology(info.family, info.codeName, info.model);
             }
             catch (Exception ex)
             {
@@ -278,7 +300,11 @@ namespace ZenStates.Core
                 info.patchLevel = GetPatchLevel();
                 info.svi2 = GetSVI2Info(info.codeName);
                 systemInfo = new SystemInfo(info, smu);
-                powerTable = new PowerTable(smu, io);
+                powerTable = new PowerTable(smu, io, mmio);
+				info.aod = new AOD(io);
+                info.TDCSupported = powerTable.tableDef.offsetTDC >= 0 ? true : false;
+                info.EDCSupported = powerTable.tableDef.offsetEDC >= 0 ? true : false;
+                info.THMSupported = powerTable.tableDef.offsetTHM >= 0 ? true : false;
 
                 if (!SendTestMessage())
                     LastError = new ApplicationException("SMU is not responding to test message!");
@@ -290,29 +316,6 @@ namespace ZenStates.Core
                 LastError = ex;
                 Status = IOModule.LibStatus.PARTIALLY_OK;
             }
-
-            try
-            {
-                if (HasTimeStampCounter)
-                {
-                    GroupAffinity previousAffinity = ThreadAffinity.Set(cpu0Affinity);
-                    EstimateTimeStampCounterFrequency(out _estimatedTimeStampCounterFrequency, out _estimatedTimeStampCounterFrequencyError);
-                    ThreadAffinity.Set(previousAffinity);
-                }
-                else
-                {
-                    _estimatedTimeStampCounterFrequency = 0;
-                }
-
-                TimeStampCounterFrequency = _estimatedTimeStampCounterFrequency;
-
-            }
-            catch (Exception ex)
-            {
-                LastError = ex;
-                Status = IOModule.LibStatus.PARTIALLY_OK;
-            }
-
             ccd1Temp = 0;
             ccd2Temp = 0;
             ccd1TempSupported = false;
@@ -321,6 +324,8 @@ namespace ZenStates.Core
             cpuVcore = 0;
             cpuVsoc = 0;
             cpuBusClock = 0;
+            baseClock = 0;
+            baseMulti = 0;
 
             RefreshSensors();
 
@@ -395,9 +400,9 @@ namespace ZenStates.Core
             return Ring0.Rdmsr(index, out eax, out edx);
         }
 
-        public bool ReadMsrTx(uint index, ref uint eax, ref uint edx)
+        public bool ReadMsrTx(uint index, ref uint eax, ref uint edx, int i)
         {
-            GroupAffinity affinity = GroupAffinity.Single(0, (int)index);
+            GroupAffinity affinity = GroupAffinity.Single(0, i);
 
             return Ring0.RdmsrTx(index, out eax, out edx, affinity);
         }
@@ -406,7 +411,7 @@ namespace ZenStates.Core
         {
             bool res = true;
 
-            for (var i = 0; i < info.logicalCores; i++)
+            for (var i = 0; i < info.topology.logicalCores; i++)
             {
                 res = Ring0.WrmsrTx(msr, eax, edx, GroupAffinity.Single(0, i));
             }
@@ -415,6 +420,7 @@ namespace ZenStates.Core
         }
 
         public void WriteIoPort(uint port, byte value) => Ring0.WriteIoPort(port, value);
+        public byte ReadIoPort(uint port) => Ring0.ReadIoPort(port);
         public bool ReadPciConfig(uint pciAddress, uint regAddress, ref uint value) => Ring0.ReadPciConfig(pciAddress, regAddress, out value);
         public uint GetPciAddress(byte bus, byte device, byte function) => Ring0.GetPciAddress(bus, device, function);
 
@@ -459,7 +465,10 @@ namespace ZenStates.Core
                             codeName = CodeName.PinnacleRidge;
                         break;
                     case 0x18:
-                        codeName = CodeName.Picasso;
+                        if (cpuInfo.packageType == PackageType.AM4)
+                            codeName = CodeName.RavenRidge2;
+                        else
+                            codeName = CodeName.Picasso;
                         break;
                     case 0x50: // Subor Z+, CPUID 0x00850F00
                         codeName = CodeName.FireFlight;
@@ -503,11 +512,14 @@ namespace ZenStates.Core
                     case 0x21:
                         codeName = CodeName.Vermeer;
                         break;
-                    case 0x40:
+                    case 0x44:
                         codeName = CodeName.Rembrandt;
                         break;
                     case 0x50:
                         codeName = CodeName.Cezanne;
+                        break;
+                    case 0x61:
+                        codeName = CodeName.Raphael;
                         break;
 
                     default:
@@ -533,45 +545,46 @@ namespace ZenStates.Core
                 case CodeName.SummitRidge:
                 case CodeName.PinnacleRidge:
                 case CodeName.RavenRidge:
+                case CodeName.RavenRidge2:
                 case CodeName.FireFlight:
                 case CodeName.Dali:
-                    svi.coreAddress = F17H_M01H_SVI_TEL_PLANE0;
-                    svi.socAddress = F17H_M01H_SVI_TEL_PLANE1;
+                    svi.coreAddress = Constants.F17H_M01H_SVI_TEL_PLANE0;
+                    svi.socAddress = Constants.F17H_M01H_SVI_TEL_PLANE1;
                     break;
 
                 // Zen Threadripper/EPYC
                 case CodeName.Whitehaven:
                 case CodeName.Naples:
                 case CodeName.Colfax:
-                    svi.coreAddress = F17H_M01H_SVI_TEL_PLANE1;
-                    svi.socAddress = F17H_M01H_SVI_TEL_PLANE0;
+                    svi.coreAddress = Constants.F17H_M01H_SVI_TEL_PLANE1;
+                    svi.socAddress = Constants.F17H_M01H_SVI_TEL_PLANE0;
                     break;
 
                 // Zen2 Threadripper/EPYC
                 case CodeName.CastlePeak:
                 case CodeName.Rome:
-                    svi.coreAddress = F17H_M30H_SVI_TEL_PLANE0;
-                    svi.socAddress = F17H_M30H_SVI_TEL_PLANE1;
+                    svi.coreAddress = Constants.F17H_M30H_SVI_TEL_PLANE0;
+                    svi.socAddress = Constants.F17H_M30H_SVI_TEL_PLANE1;
                     break;
 
                 // Picasso
                 case CodeName.Picasso:
                     if ((smu.Version & 0xFF000000) > 0)
                     {
-                        svi.coreAddress = F17H_M01H_SVI_TEL_PLANE0;
-                        svi.socAddress = F17H_M01H_SVI_TEL_PLANE1;
+                        svi.coreAddress = Constants.F17H_M01H_SVI_TEL_PLANE0;
+                        svi.socAddress = Constants.F17H_M01H_SVI_TEL_PLANE1;
                     }
                     else
                     {
-                        svi.coreAddress = F17H_M01H_SVI_TEL_PLANE1;
-                        svi.socAddress = F17H_M01H_SVI_TEL_PLANE0;
+                        svi.coreAddress = Constants.F17H_M01H_SVI_TEL_PLANE1;
+                        svi.socAddress = Constants.F17H_M01H_SVI_TEL_PLANE0;
                     }
                     break;
 
                 // Zen2
                 case CodeName.Matisse:
-                    svi.coreAddress = F17H_M70H_SVI_TEL_PLANE0;
-                    svi.socAddress = F17H_M70H_SVI_TEL_PLANE1;
+                    svi.coreAddress = Constants.F17H_M70H_SVI_TEL_PLANE0;
+                    svi.socAddress = Constants.F17H_M70H_SVI_TEL_PLANE1;
                     break;
 
                 // Zen2 APU, Zen3 APU ?
@@ -580,27 +593,30 @@ namespace ZenStates.Core
                 case CodeName.Cezanne:
                 case CodeName.VanGogh:
                 case CodeName.Rembrandt:
-                    svi.coreAddress = F17H_M60H_SVI_TEL_PLANE0;
-                    svi.socAddress = F17H_M60H_SVI_TEL_PLANE1;
+                    svi.coreAddress = Constants.F17H_M60H_SVI_TEL_PLANE0;
+                    svi.socAddress = Constants.F17H_M60H_SVI_TEL_PLANE1;
                     break;
 
                 // Zen3, Zen3 Threadripper/EPYC ?
                 case CodeName.Vermeer:
+                case CodeName.Raphael: // Unknown
+                    svi.coreAddress = Constants.F19H_M21H_SVI_TEL_PLANE0;
+                    svi.socAddress = Constants.F19H_M21H_SVI_TEL_PLANE1;
+                    break;
                 case CodeName.Chagall:
                 case CodeName.Milan:
-                    svi.coreAddress = F19H_M21H_SVI_TEL_PLANE0;
-                    svi.socAddress = F19H_M21H_SVI_TEL_PLANE1;
+                    svi.coreAddress = Constants.F19H_M01H_SVI_TEL_PLANE1;
+                    svi.socAddress = Constants.F19H_M01H_SVI_TEL_PLANE0;
                     break;
 
                 default:
-                    svi.coreAddress = F17H_M01H_SVI_TEL_PLANE0;
-                    svi.socAddress = F17H_M01H_SVI_TEL_PLANE1;
+                    svi.coreAddress = Constants.F17H_M01H_SVI_TEL_PLANE0;
+                    svi.socAddress = Constants.F17H_M01H_SVI_TEL_PLANE1;
                     break;
             }
 
             return svi;
         }
-
         public string GetVendor()
         {
             if (Opcode.Cpuid(0, 0, out uint _eax, out uint ebx, out uint ecx, out uint edx))
@@ -624,11 +640,11 @@ namespace ZenStates.Core
             return model.Trim();
         }
 
+   
         public uint GetPatchLevel()
         {
             if (Ring0.Rdmsr(0x8b, out uint eax, out uint edx))
                 return eax;
-
             return 0;
         }
 
@@ -652,34 +668,187 @@ namespace ZenStates.Core
             return Equals(GetPBOScalar(), 0.0f);
         }
 
-        public float GetPBOScalar()
+        public int GetPBOScalar()
         {
             var cmd = new SMUCommands.GetPBOScalar(smu);
             cmd.Execute();
 
-            return cmd.Scalar;
+            return (int)cmd.Scalar;
         }
 
+        public int GetBoostLimit()
+        {
+            var cmd = new SMUCommands.GetBoostLimit(smu);
+            cmd.Execute();
+
+            return cmd.BoostLimit;
+        }
+
+        public int GetMaxPPTLimit()
+        {
+            if (smu.Hsmp.ReadMaxSocketPowerLimit == 0x0) return -1;
+
+            var cmd = new SMUCommands.GetMaxPPTLimit(smu);
+            cmd.Execute();
+
+            return cmd.PPT;
+        }
+        public int GetPPTLimit()
+        {
+            if (smu.Hsmp.ReadSocketPowerLimit == 0x0) return -1;
+
+            var cmd = new SMUCommands.GetPPTLimit(smu);
+            cmd.Execute();
+
+            return cmd.PPT;
+        }
+        public int GetMaxTDCLimit()
+        {
+            if (!info.TDCSupported) return 0;
+
+            if (smu.Rsmu.SMU_MSG_SetTDCVDDLimit == 0x0) return 0;
+
+            SMU.Status status = RefreshPowerTable();
+
+            if (status == SMU.Status.OK && powerTable.TDC > 0)
+            {
+                uint _tdc = (uint)powerTable.TDC;
+
+                status = SetTDCVDDLimit(9999);
+
+                if (status == SMU.Status.OK)
+                {
+                    status = RefreshPowerTable();
+                    if (status == SMU.Status.OK)
+                    {
+                        int maxtdc = powerTable.TDC;
+                        SetTDCVDDLimit(_tdc);
+                        return maxtdc;
+                    }
+                    else return 0;
+                }
+                else return 0;
+            }
+            else return 0;
+        }
+        public int GetMaxEDCLimit()
+        {
+            if (!info.EDCSupported) return -1;
+
+            if (smu.Rsmu.SMU_MSG_SetEDCVDDLimit == 0x0) return -2;
+
+            SMU.Status status = RefreshPowerTable();
+
+            if (status == SMU.Status.OK && powerTable.EDC > 0)
+            {
+                uint _edc = (uint)powerTable.EDC;
+
+                status = SetEDCVDDLimit(9999);
+
+                if (status == SMU.Status.OK)
+                {
+                    status = RefreshPowerTable();
+                    if (status == SMU.Status.OK)
+                    {
+                        int maxedc = powerTable.EDC;
+                        SetEDCVDDLimit(_edc);
+                        return maxedc;
+                    }
+                    else return -3;
+                }
+                else return -4;
+            }
+            else return -5;
+        }
+        public int GetMaxTHMLimit()
+        {
+            if (!info.THMSupported) return 0;
+
+            if (smu.Rsmu.SMU_MSG_SetHTCLimit == 0x0 && smu.Mp1Smu.SMU_MSG_SetHTCLimit == 0x0) return 0;
+
+            SMU.Status status = RefreshPowerTable();
+            Thread.Sleep(25);
+
+            if (status == SMU.Status.OK && powerTable.THM > 0)
+            {
+                uint _thm = (uint)powerTable.THM;
+
+                status = SetHTCLimit(999);
+                Thread.Sleep(25);
+                SMU.Status statusmp1 = SetHTCLimitMP1(999);
+                Thread.Sleep(25);
+
+                if (statusmp1 == SMU.Status.OK || status == SMU.Status.OK)
+                //if (status == SMU.Status.OK)
+                {
+                    status = RefreshPowerTable();
+                    if (status == SMU.Status.OK)
+                    {
+                        int maxthm = powerTable.THM;
+                        Thread.Sleep(25);
+                        SetHTCLimit(_thm);
+                        Thread.Sleep(25);
+                        SetHTCLimitMP1(_thm);
+                        return maxthm;
+                    }
+                    else return 0;
+                }
+                else return 0;
+            }
+            else return 0;
+        }
+
+        public int GetMaxBoostLimit()
+        {
+            if (smu.Hsmp.ReadBoostLimit == 0x0) return 0;
+
+            uint _boost = (uint)GetBoostLimit();
+
+            if (_boost > 0)
+            {
+                SMU.Status status = SetBoostLimit(9999);
+
+                if (status == SMU.Status.OK)
+                {
+                    uint maxboost = (uint)GetBoostLimit();
+                    SetBoostLimit(_boost);
+                    return (int)maxboost;
+                }
+                else return 0;
+            }
+            else return 0;
+        }
         public bool SendTestMessage() => new SMUCommands.SendTestMessage(smu).Execute().Success;
         public uint GetSmuVersion() => new SMUCommands.GetSmuVersion(smu).Execute().args[0];
+        public double? GetBclk() => mmio.GetBclk();
+        public bool SetBclk(double blck) => mmio.SetBclk(blck);
         public SMU.Status TransferTableToDram() => new SMUCommands.TransferTableToDram(smu).Execute().status;
         public uint GetTableVersion() => new SMUCommands.GetTableVersion(smu).Execute().args[0];
         public uint GetDramBaseAddress() => new SMUCommands.GetDramAddress(smu).Execute().args[0];
+        public long GetDramBaseAddress64()
+        {
+            SMUCommands.CmdResult result = new SMUCommands.GetDramAddress(smu).Execute();
+            return (long)result.args[1] << 32 | result.args[0];
+        }
+        public bool GetLN2Mode() => new SMUCommands.GetLN2Mode(smu).Execute().args[0] == 1;
         public SMU.Status SetPPTLimit(uint arg = 0U) => new SMUCommands.SetSmuLimit(smu).Execute(smu.Rsmu.SMU_MSG_SetPPTLimit, arg).status;
         public SMU.Status SetEDCVDDLimit(uint arg = 0U) => new SMUCommands.SetSmuLimit(smu).Execute(smu.Rsmu.SMU_MSG_SetEDCVDDLimit, arg).status;
         public SMU.Status SetEDCSOCLimit(uint arg = 0U) => new SMUCommands.SetSmuLimit(smu).Execute(smu.Rsmu.SMU_MSG_SetEDCSOCLimit, arg).status;
         public SMU.Status SetTDCVDDLimit(uint arg = 0U) => new SMUCommands.SetSmuLimit(smu).Execute(smu.Rsmu.SMU_MSG_SetTDCVDDLimit, arg).status;
         public SMU.Status SetTDCSOCLimit(uint arg = 0U) => new SMUCommands.SetSmuLimit(smu).Execute(smu.Rsmu.SMU_MSG_SetTDCSOCLimit, arg).status;
+		public SMU.Status SetOverclockCpuVid(byte arg) => new SMUCommands.SetOverclockCpuVid(smu).Execute(arg).status;
+        public SMU.Status SetHTCLimit(uint arg = 0U) => new SMUCommands.SetHTCLimit(smu).Execute(smu.Rsmu.SMU_MSG_SetHTCLimit, arg).status;
+        public SMU.Status SetHTCLimitMP1(uint arg = 0U) => new SMUCommands.SetMp1HTCLimit(smu).Execute(smu.Mp1Smu.SMU_MSG_SetHTCLimit, arg).status;
+        public SMU.Status SetBoostLimit(uint arg = 0U) => new SMUCommands.SetBoostLimit(smu).Execute(smu.Hsmp.WriteBoostLimit, arg).status;
+        public SMU.Status SetBoostLimitAllCore(uint arg = 0U) => new SMUCommands.SetBoostLimit(smu).Execute(smu.Hsmp.WriteBoostLimitAllCores, arg).status;
         public SMU.Status EnableOcMode() => new SMUCommands.SetOcMode(smu).Execute(true).status;
-        public SMU.Status DisableOcMode() => new SMUCommands.SetOcMode(smu).Execute(true).status;
+        public SMU.Status DisableOcMode() => new SMUCommands.SetOcMode(smu).Execute(false).status;
         public SMU.Status SetPBOScalar(uint scalar) => new SMUCommands.SetPBOScalar(smu).Execute(scalar).status;
-        public SMU.Status RefreshPowerTable() => powerTable.Refresh();
+        public SMU.Status RefreshPowerTable() => powerTable != null ? powerTable.Refresh() : SMU.Status.FAILED;
         public int? GetPsmMarginSingleCore(uint coreMask)
         {
             SMUCommands.CmdResult result = new SMUCommands.GetPsmMarginSingleCore(smu).Execute(coreMask);
-            if (result.Success)
-                return (int)result.args[0];
-            return null;
+            return result.Success ? (int)result.args[0] : (int?)null;
         }
         public int? GetPsmMarginSingleCore(uint core, uint ccd, uint ccx) => GetPsmMarginSingleCore(MakeCoreMask(core, ccd, ccx));
         public bool SetPsmMarginAllCores(int margin) => new SMUCommands.SetPsmMarginAllCores(smu).Execute(margin).Success;
@@ -717,50 +886,66 @@ namespace ZenStates.Core
             return (data & 1) == 1;
         }
 
-
-        protected virtual void Dispose(bool disposing)
+        public float? GetCpuTemperature()
         {
-            if (!disposedValue)
-            {
-                if (disposing)
-                {
-                    io.Dispose();
-                    Ring0.Close();
-                    Opcode.Close();
-                }
+            uint thmData = 0;
 
-                disposedValue = true;
+            if (ReadDwordEx(Constants.THM_CUR_TEMP, ref thmData))
+            {
+                float offset = 0.0f;
+
+                // Get tctl temperature offset
+                // Offset table: https://github.com/torvalds/linux/blob/master/drivers/hwmon/k10temp.c#L78
+                if (info.cpuName.Contains("2700X"))
+                    offset = -10.0f;
+                else if (info.cpuName.Contains("1600X") || info.cpuName.Contains("1700X") || info.cpuName.Contains("1800X"))
+                    offset = -20.0f;
+                else if (info.cpuName.Contains("Threadripper 19") || info.cpuName.Contains("Threadripper 29"))
+                    offset = -27.0f;
+
+                // THMx000[31:21] = CUR_TEMP, THMx000[19] = CUR_TEMP_RANGE_SEL
+                // Range sel = 0 to 255C (Temp = Tctl - offset)
+                float temperature = (thmData >> 21) * 0.125f + offset;
+
+                // Range sel = -49 to 206C (Temp = Tctl - offset - 49)
+                if ((thmData & Constants.THM_CUR_TEMP_RANGE_SEL_MASK) != 0)
+                    temperature -= 49.0f;
+
+                return temperature;
             }
+
+            return null;
         }
+
         public bool RefreshSensors()
         {
 
             if (info.family != Family.FAMILY_17H && info.family != Family.FAMILY_19H) return false;
 
-            if (Ring0.WaitPciBusMutex(10))
+            if (Ring0.WaitPciBusMutex(25))
             {
                 GroupAffinity previousAffinity = ThreadAffinity.Set(cpu0Affinity);
 
-                Ring0.WritePciConfig(0x00, F17H_PCI_CONTROL_REGISTER, THM_CUR_TEMP);
-                Ring0.ReadPciConfig(0x00, F17H_PCI_CONTROL_REGISTER + 4, out uint temperature);
+                Ring0.WritePciConfig(0x00, Constants.F17H_PCI_CONTROL_REGISTER, Constants.THM_CUR_TEMP);
+                Ring0.ReadPciConfig(0x00, Constants.F17H_PCI_CONTROL_REGISTER + 4, out uint temperature);
 
                 uint smuSvi0Tfn = 0;
                 uint smuSvi0TelPlane0 = 0;
                 uint smuSvi0TelPlane1 = 0;
 
-                Ring0.WritePciConfig(0x00, F17H_PCI_CONTROL_REGISTER, F17H_M01H_SVI + 0x8);
-                Ring0.ReadPciConfig(0x00, F17H_PCI_CONTROL_REGISTER + 4, out smuSvi0Tfn);
+                Ring0.WritePciConfig(0x00, Constants.F17H_PCI_CONTROL_REGISTER, Constants.F17H_M01H_SVI + 0x8);
+                Ring0.ReadPciConfig(0x00, Constants.F17H_PCI_CONTROL_REGISTER + 4, out smuSvi0Tfn);
 
-                Ring0.WritePciConfig(0x00, F17H_PCI_CONTROL_REGISTER, info.svi2.coreAddress);
-                Ring0.ReadPciConfig(0x00, F17H_PCI_CONTROL_REGISTER + 4, out smuSvi0TelPlane0);
+                Ring0.WritePciConfig(0x00, Constants.F17H_PCI_CONTROL_REGISTER, info.svi2.coreAddress);
+                Ring0.ReadPciConfig(0x00, Constants.F17H_PCI_CONTROL_REGISTER + 4, out smuSvi0TelPlane0);
 
-                Ring0.WritePciConfig(0x00, F17H_PCI_CONTROL_REGISTER, info.svi2.socAddress);
-                Ring0.ReadPciConfig(0x00, F17H_PCI_CONTROL_REGISTER + 4, out smuSvi0TelPlane1);
+                Ring0.WritePciConfig(0x00, Constants.F17H_PCI_CONTROL_REGISTER, info.svi2.socAddress);
+                Ring0.ReadPciConfig(0x00, Constants.F17H_PCI_CONTROL_REGISTER + 4, out smuSvi0TelPlane1);
 
                 for (int ccd = 0; ccd < 2; ccd++)
                 {
-                    Ring0.WritePciConfig(0x00, F17H_PCI_CONTROL_REGISTER, F17H_M70H_CCD_TEMP + ((uint)ccd * 0x4));
-                    Ring0.ReadPciConfig(0x00, F17H_PCI_CONTROL_REGISTER + 4, out uint ccdRawTemp);
+                    Ring0.WritePciConfig(0x00, Constants.F17H_PCI_CONTROL_REGISTER, Constants.F17H_M70H_CCD_TEMP + ((uint)ccd * 0x4));
+                    Ring0.ReadPciConfig(0x00, Constants.F17H_PCI_CONTROL_REGISTER + 4, out uint ccdRawTemp);
 
                     ccdRawTemp &= 0xFFF;
                     float ccdTemp = ((ccdRawTemp * 125) - 305000) * 0.001f;
@@ -792,23 +977,25 @@ namespace ZenStates.Core
                     }
                 }
 
-                double timeStampCounterMultiplier = GetTimeStampCounterMultiplier();
-                if (timeStampCounterMultiplier > 0)
-                {
-                    cpuBusClock = (float)(TimeStampCounterFrequency / timeStampCounterMultiplier);
-                }
-                else
-                {
-                    cpuBusClock = 0;
-                }
-
                 Ring0.ReleasePciBusMutex();
 
                 ThreadAffinity.Set(previousAffinity);
 
+                double? bclk = mmio.GetBclk();
+                if (bclk != null)
+                {
+                    cpuBusClock = (float)bclk;
+                }
+                else
+                {
+                    cpuBusClock = 100;
+                }
+
+
+
                 // current temp Bit [31:21]
                 // If bit 19 of the Temperature Control register is set, there is an additional offset of 49 degrees C.
-                bool tempOffsetFlag = (temperature & THM_CUR_TEMP_RANGE_SEL_MASK) != 0;
+                bool tempOffsetFlag = (temperature & Constants.THM_CUR_TEMP_RANGE_SEL_MASK) != 0;
                 temperature = (temperature >> 21) * 125;
 
                 float offset = 0.0f;
@@ -859,67 +1046,53 @@ namespace ZenStates.Core
             }
             return true;
         }
-        private void EstimateTimeStampCounterFrequency(out double frequency, out double error)
-        {
-            // preload the function
-            EstimateTimeStampCounterFrequency(0, out double f, out double e);
-            EstimateTimeStampCounterFrequency(0, out f, out e);
-
-            // estimate the frequency
-            error = double.MaxValue;
-            frequency = 0;
-            for (int i = 0; i < 5; i++)
-            {
-                EstimateTimeStampCounterFrequency(0.025, out f, out e);
-                if (e < error)
-                {
-                    error = e;
-                    frequency = f;
-                }
-
-                if (error < 1e-4)
-                    break;
-            }
-        }
-        private static void EstimateTimeStampCounterFrequency(double timeWindow, out double frequency, out double error)
-        {
-            long ticks = (long)(timeWindow * Stopwatch.Frequency);
-
-            long timeBegin = Stopwatch.GetTimestamp() + (long)Math.Ceiling(0.001 * ticks);
-            long timeEnd = timeBegin + ticks;
-
-            while (Stopwatch.GetTimestamp() < timeBegin)
-            { }
-
-            ulong countBegin = Opcode.Rdtsc();
-            long afterBegin = Stopwatch.GetTimestamp();
-
-            while (Stopwatch.GetTimestamp() < timeEnd)
-            { }
-
-            ulong countEnd = Opcode.Rdtsc();
-            long afterEnd = Stopwatch.GetTimestamp();
-
-            double delta = timeEnd - timeBegin;
-            frequency = 1e-6 * ((double)(countEnd - countBegin) * Stopwatch.Frequency) / delta;
-
-            double beginError = (afterBegin - timeBegin) / delta;
-            double endError = (afterEnd - timeEnd) / delta;
-            error = beginError + endError;
-        }
+ 
         private double GetTimeStampCounterMultiplier()
         {
             if (info.family == Family.FAMILY_17H)
             {
                 uint ctlEax, ctlEdx;
-                Ring0.Rdmsr(MSR_PSTATE_CTL, out ctlEax, out ctlEdx);
-                Ring0.Wrmsr(MSR_PSTATE_CTL, ctlEax | (0 << 0) | (1 << 0), ctlEdx);
+                Ring0.Rdmsr(Constants.MSR_PSTATE_CTL, out ctlEax, out ctlEdx);
+                ctlEax = Utils.SetBits(ctlEax, 0, 3, 1);
+                Ring0.Wrmsr(Constants.MSR_PSTATE_CTL, ctlEax , ctlEdx);
             }
 
-            Ring0.Rdmsr(MSR_PSTATE_0, out uint eax, out _);
+            Ring0.Rdmsr(Constants.MSR_PSTATE_0, out uint eax, out _);
+
             uint cpuDfsId = (eax >> 8) & 0x3f;
             uint cpuFid = eax & 0xff;
+
             return 2.0 * cpuFid / cpuDfsId;
+        }
+
+		public float? GetSingleCcdTemperature(uint ccd)
+        {
+            uint thmData = 0;
+
+            if (ReadDwordEx(Constants.F17H_M70H_CCD_TEMP + (ccd * 0x4), ref thmData))
+            {
+                float ccdTemp = (thmData & 0xfff) * 0.125f - 305.0f;
+                if (ccdTemp > 0 && ccdTemp < 125) // Zen 2 reports 95 degrees C max, but it might exceed that.
+                    return ccdTemp;
+                return 0;
+            }
+
+            return null;
+        }
+        
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!disposedValue)
+            {
+                if (disposing)
+                {
+                    io.Dispose();
+                    Ring0.Close();
+                    Opcode.Close();
+                }
+
+                disposedValue = true;
+            }
         }
 
         public void Dispose()
