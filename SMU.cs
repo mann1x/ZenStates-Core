@@ -613,6 +613,8 @@ namespace ZenStates.Core
         {
             SMU_TYPE = SmuType.TYPE_APU2;
 
+            Rsmu.SMU_MSG_SetPBOScalar = 0x3E;
+
             Rsmu.SMU_MSG_SetDldoPsmMargin = 0x53;
             Rsmu.SMU_MSG_SetAllDldoPsmMargin = 0x5D;
             Rsmu.SMU_MSG_GetDldoPsmMargin = 0x2F;
@@ -669,6 +671,9 @@ namespace ZenStates.Core
             { Cpu.CodeName.Vermeer, new Zen3Settings() },
             { Cpu.CodeName.Chagall, new Zen3Settings() },
             { Cpu.CodeName.Milan, new Zen3Settings() },
+
+            // Zen4
+            { Cpu.CodeName.Raphael, new Zen4Settings() },
 
             // APU
             { Cpu.CodeName.RavenRidge, new APUSettings0() },
