@@ -341,3 +341,4 @@ ASALocalRun/
 healthchecksdb
 *.bak
 *.vshistory*
+*.tmp
