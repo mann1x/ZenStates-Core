@@ -340,4 +340,4 @@ ASALocalRun/
 # BeatPulse healthcheck temp database
 healthchecksdb
 *.bak
-.vshistory/
+*.vshistory*
