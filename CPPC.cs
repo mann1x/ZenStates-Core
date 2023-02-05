@@ -1,15 +1,16 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Runtime.InteropServices;
 using static ZenStates.Core.ACPI;
 
 namespace ZenStates.Core
 {
-    public class AOD
+    public class CPPC
     {
         internal readonly IOModule io;
         internal readonly ACPI acpi;
-        public AodTable Table;
+        public CPPCTable Table;
 
         private static readonly Dictionary<int, string> ProcOdtDict = new Dictionary<int, string>
         {
@@ -95,7 +96,7 @@ namespace ZenStates.Core
 
         [Serializable]
         [StructLayout(LayoutKind.Explicit, Pack = 4)]
-        public struct AodData
+        public struct CPPCData
         {
             [FieldOffset(8920)] public int SMTEn;
             [FieldOffset(8924)] public int MemClk;
@@ -145,7 +146,7 @@ namespace ZenStates.Core
         }
 
         [Serializable]
-        public class AodTable
+        public class CPPCTable
         {
             public readonly uint Signature;
             public ulong OemTableId;
@@ -153,26 +154,26 @@ namespace ZenStates.Core
             public uint BaseAddress;
             public int Length;
             public ACPITable? acpiTable;
-            public AodData Data;
-            public byte[] rawAodTable;
+            public CPPCData Data;
+            public byte[] rawCPPCTable;
 
-            public AodTable()
+            public CPPCTable()
             {
                 this.Signature = Signature(TableSignature.SSDT);
-                this.OemTableId = SignatureUL(TableSignature.AOD_);
+                this.OemTableId = SignatureUL(TableSignature.CPUSSDT);
                 //this.RegionSignature = ByteSignature(TableSignature.AODE);
             }
         }
 
-        public AOD(IOModule io)
+        public CPPC(IOModule io)
         {
             this.io = io;
             this.acpi = new ACPI(io);
-            this.Table = new AodTable();
+            this.Table = new CPPCTable();
             this.Init();
         }
 
-        private ACPITable? GetAcpiTable()
+        private ACPITable? GetCpuSsdtTable()
         {
             try
             {
@@ -185,11 +186,9 @@ namespace ZenStates.Core
                         try
                         {
                             SDTHeader hdr = acpi.GetHeader<SDTHeader>(addr);
-                            if (
-                                hdr.Signature == this.Table.Signature
-                                && (hdr.OEMTableID == this.Table.OemTableId || hdr.OEMTableID == SignatureUL(TableSignature.AAOD))
-                            )
+                            if (hdr.Signature == Signature(TableSignature.SSDT) && hdr.OEMTableID == SignatureUL("CPUSSDT"))
                             {
+                                this.Table.BaseAddress = addr;
                                 return ParseSdtTable(io.ReadMemory(new IntPtr(addr), (int)hdr.Length));
                             }
                         }
@@ -203,13 +202,12 @@ namespace ZenStates.Core
 
         private void Init()
         {
-            this.Table.acpiTable = GetAcpiTable();
+            this.Table.acpiTable = GetCpuSsdtTable();
 
+            /*
             if (this.Table.acpiTable != null)
             {
-                int regionIndex = Utils.FindSequence(this.Table.acpiTable?.Data, 0, ByteSignature(TableSignature.AODE));
-                if (regionIndex == -1)
-                    regionIndex = Utils.FindSequence(this.Table.acpiTable?.Data, 0, ByteSignature(TableSignature.AODT));
+                int regionIndex = Utils.FindSequence(this.Table.acpiTable?.Data, 0, ByteSignature(TableSignature.CPUSSDT));
                 if (regionIndex == -1)
                     return;
                 byte[] region = new byte[16];
@@ -219,7 +217,9 @@ namespace ZenStates.Core
                 this.Table.BaseAddress = opRegion.Offset;
                 this.Table.Length = opRegion.Length[1] << 8 | opRegion.Length[0];
             }
-
+            */
+            //this.Table.BaseAddress = 0;
+            this.Table.Length = (int)this.Table.acpiTable.Value.Data.Length;
             this.Refresh();
         }
 
@@ -227,8 +227,8 @@ namespace ZenStates.Core
         {
             try
             {
-                this.Table.rawAodTable = this.io.ReadMemory(new IntPtr(this.Table.BaseAddress), this.Table.Length);
-                this.Table.Data = Utils.ByteArrayToStructure<AodData>(this.Table.rawAodTable);
+                this.Table.rawCPPCTable = this.io.ReadMemory(new IntPtr(this.Table.BaseAddress), this.Table.Length);
+                // this.Table.Data = Utils.ByteArrayToStructure<CPPCData>(this.Table.rawCPPCTable);
                 // int test = Utils.FindSequence(rawTable, 0, BitConverter.GetBytes(0x3ae));
                 return true;
             }

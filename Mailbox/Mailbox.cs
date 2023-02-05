@@ -9,7 +9,7 @@
 
         // SMU Messages (command IDs)
         // 0x1 and 0x2 seem to be common for all mailboxes
-        public uint SMU_MSG_TestMessage { get; } = 0x1;
+        public uint SMU_MSG_TestMessage { get; set; } = 0x1;
         public uint SMU_MSG_GetSmuVersion { get; } = 0x2;
     }
 }

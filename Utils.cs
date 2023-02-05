@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using ZenStates.Core.SMUCommands;
 
 namespace ZenStates.Core
 {
@@ -81,8 +82,12 @@ namespace ZenStates.Core
 
         public static uint[] MakeCmdArgs(uint[] args)
         {
-            uint[] cmdArgs = { 0, 0, 0, 0, 0, 0 };
-            int length = args.Length > 6 ? 6 : args.Length;
+            int maxargs = args.Length > 6 ? 8 : 6;
+            uint[] cmdArgs = new uint[maxargs];
+            int length = args.Length > maxargs ? maxargs : args.Length;
+
+            for (int i = 0; i < maxargs; ++i)
+                cmdArgs[i] = 0;
 
             for (int i = 0; i < length; i++)
                 cmdArgs[i] = args[i];

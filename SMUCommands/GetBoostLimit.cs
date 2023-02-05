@@ -9,11 +9,13 @@ namespace ZenStates.Core.SMUCommands
         {
             BoostLimit = 0;
         }
-        public override CmdResult Execute()
+        public CmdResult Execute(uint apicId)
         {
-            if (CanExecute() && smu.Hsmp.ReadBoostLimit != 0x0)
+            uint cmd = smu.Hsmp.ReadBoostLimit;
+            if (CanExecute() && cmd != 0x0)
             {
-                result.status = smu.SendHsmpCommand(smu.Hsmp.ReadBoostLimit, ref result.args);
+                result.args[0] = apicId;
+                result.status = smu.SendHsmpCommand(cmd, ref result.args);
                 if (result.Success)
                 {
                     byte[] bytes = BitConverter.GetBytes(result.args[0]);

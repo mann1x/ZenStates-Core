@@ -11,6 +11,7 @@ namespace ZenStates.Core
             public const string RSDT = "RSDT";
             public const string XSDT = "XSDT";
             public const string SSDT = "SSDT";
+            public const string CPUSSDT = "CPUSSDT";
             // Table OemId signatures
             public const string AOD_ = "AOD     ";
             public const string AAOD = "AMD AOD";

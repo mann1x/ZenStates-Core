@@ -59,6 +59,9 @@ namespace ZenStates.Core
 
         public uint Version { get; set; }
 
+        public uint hsmpVersion { get; set; }
+
+
         public uint TableVersion { get; set; }
         //public bool ManualOverclockSupported { get; protected set; }
 
@@ -71,7 +74,7 @@ namespace ZenStates.Core
         // SMU has different mailboxes, each with its own registers and command IDs
         public RSMUMailbox Rsmu { get; protected set; }
         public MP1Mailbox Mp1Smu { get; protected set; }
-        public HSMPMailbox Hsmp { get; protected set; }
+        public HSMPMailbox Hsmp { get; set; }
 
         private bool SmuWriteReg(uint addr, uint data)
         {

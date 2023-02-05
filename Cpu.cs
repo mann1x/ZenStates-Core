@@ -1,9 +1,11 @@
 using OpenHardwareMonitor.Hardware;
 using System;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
+using ZenStates.Core.SMUCommands;
 
 namespace ZenStates.Core
 {
@@ -100,6 +102,8 @@ namespace ZenStates.Core
             public uint cpuNodes;
             public uint? coreDisableMap;
 			public uint[] performanceOfCore;
+            public uint[] apicIds;
+            public uint[] cores2apicId;
         }
         public struct CPUInfo
         {
@@ -116,6 +120,8 @@ namespace ZenStates.Core
             public CpuTopology topology;
             public SVI2 svi2;
             public AOD aod;
+            public CPPC cppc;
+            public bool PPTSupported;
             public bool TDCSupported;
             public bool EDCSupported;
             public bool THMSupported;
@@ -166,8 +172,49 @@ namespace ZenStates.Core
                     else
                         topology.performanceOfCore[i / topology.threadsPerCore] = 0;
                 }
+
+                topology.apicIds = new uint[topology.logicalCores];
+                topology.cores2apicId = new uint[topology.logicalCores];
+
+                Process Proc = Process.GetCurrentProcess();
+                IntPtr _systemAffinity = Proc.ProcessorAffinity;
+                uint prevCoreSharedId = uint.MaxValue;
+                uint CoreSharedId = uint.MaxValue;
+                uint CoreId = 0;
+
+                for (int i = 0; i < topology.logicalCores; i++)
+                {
+                    ulong bitmask = (ulong)1 << i;
+                    Proc.ProcessorAffinity = (IntPtr)bitmask;
+                    
+                    foreach(ProcessThread thrd in Proc.Threads)
+                    {
+                        thrd.ProcessorAffinity = (IntPtr)bitmask;
+                    }
+
+                    // LocalApicId
+                    if (Opcode.Cpuid(0x00000001, 0, out eax, out ebx, out ecx, out edx))
+                        topology.apicIds[i] = Utils.GetBits(ebx, 24, 8);
+
+                    CoreSharedId = topology.apicIds[i] >> (int)Math.Log(topology.threadsPerCore, 2);
+
+                    if (CoreSharedId != prevCoreSharedId)
+                    {
+                        topology.cores2apicId[CoreId] = topology.apicIds[i];
+                        CoreId++;
+                    }
+                    prevCoreSharedId = CoreSharedId;
+                }
+
+                Proc.ProcessorAffinity = _systemAffinity;
+
+                foreach (ProcessThread thrd in Proc.Threads)
+                {
+                    thrd.ProcessorAffinity = _systemAffinity;
+                }
+
             }
-            catch { }
+            catch {  }
 
             uint ccdsPresent = 0, ccdsDown = 0, coreFuse = 0;
             uint fuse1 = 0x5D218;
@@ -301,7 +348,14 @@ namespace ZenStates.Core
                 info.svi2 = GetSVI2Info(info.codeName);
                 systemInfo = new SystemInfo(info, smu);
                 powerTable = new PowerTable(smu, io, mmio);
-				info.aod = new AOD(io);
+
+                smu.hsmpVersion = GetHsmpVersion();
+
+                SetHsmpCommands(smu.hsmpVersion);
+
+                info.aod = new AOD(io);
+                info.cppc = new CPPC(io);
+                info.PPTSupported = powerTable.tableDef.offsetPPT >= 0 ? true : false;
                 info.TDCSupported = powerTable.tableDef.offsetTDC >= 0 ? true : false;
                 info.EDCSupported = powerTable.tableDef.offsetEDC >= 0 ? true : false;
                 info.THMSupported = powerTable.tableDef.offsetTHM >= 0 ? true : false;
@@ -329,6 +383,53 @@ namespace ZenStates.Core
 
             RefreshSensors();
 
+        }
+        public void SetHsmpCommands(uint hsmpVersion)
+        {
+            if (hsmpVersion <= 0) 
+            {
+                if (smu.Hsmp.SMU_MSG_TestMessage == 0x1) smu.Hsmp.SMU_MSG_TestMessage = 0x0;
+                if (smu.Hsmp.GetInterfaceVersion == 0x3) smu.Hsmp.GetInterfaceVersion = 0x0;
+                if (smu.Hsmp.ReadSocketPower == 0x4) smu.Hsmp.GetInterfaceVersion = 0x0;
+                if (smu.Hsmp.WriteSocketPowerLimit == 0x5) smu.Hsmp.WriteSocketPowerLimit = 0x0;
+                if (smu.Hsmp.ReadSocketPowerLimit == 0x6) smu.Hsmp.ReadSocketPowerLimit = 0x0;
+                if (smu.Hsmp.ReadMaxSocketPowerLimit == 0x7) smu.Hsmp.ReadMaxSocketPowerLimit = 0x0;
+                if (smu.Hsmp.WriteBoostLimit == 0x8) smu.Hsmp.WriteBoostLimit = 0x0;
+                if (smu.Hsmp.WriteBoostLimitAllCores == 0x9) smu.Hsmp.WriteBoostLimitAllCores = 0x0;
+                if (smu.Hsmp.ReadBoostLimit == 0x0A) smu.Hsmp.ReadBoostLimit = 0x0;
+                if (smu.Hsmp.ReadProchotStatus == 0x0B) smu.Hsmp.ReadProchotStatus = 0x0;
+                if (smu.Hsmp.SetXgmiLinkWidthRange == 0x0C) smu.Hsmp.SetXgmiLinkWidthRange = 0x0;
+                if (smu.Hsmp.APBDisable == 0x0D) smu.Hsmp.APBDisable = 0x0;
+                if (smu.Hsmp.APBEnable == 0x0E) smu.Hsmp.APBEnable = 0x0;
+                if (smu.Hsmp.ReadCurrentFclkMemclk == 0x0F) smu.Hsmp.ReadCclkFrequencyLimit = 0x0;
+                if (smu.Hsmp.ReadCclkFrequencyLimit == 0x10) smu.Hsmp.GetInterfaceVersion = 0x0;
+                if (smu.Hsmp.ReadSocketC0Residency == 0x11) smu.Hsmp.ReadSocketC0Residency = 0x0;
+            }
+            if (hsmpVersion < 5) //22h
+            {
+                if (smu.Hsmp.GetDIMMTempRangeAndRefreshRate == 0x16) smu.Hsmp.GetDIMMTempRangeAndRefreshRate = 0x0;
+                if (smu.Hsmp.GetDIMMPowerConsumption == 0x17) smu.Hsmp.GetDIMMPowerConsumption = 0x0;
+                if (smu.Hsmp.GetDIMMThermalSensor == 0x18) smu.Hsmp.GetDIMMThermalSensor = 0x0;
+                if (smu.Hsmp.PwrCurrentActiveFreqLimitSocket == 0x19) smu.Hsmp.PwrCurrentActiveFreqLimitSocket = 0x0;
+                if (smu.Hsmp.PwrCurrentActiveFreqLimitCore == 0x1A) smu.Hsmp.PwrCurrentActiveFreqLimitCore = 0x0;
+                if (smu.Hsmp.PwrSviTelemetryAllRails == 0x1B) smu.Hsmp.PwrSviTelemetryAllRails = 0x0;
+                if (smu.Hsmp.GetSocketFreqRange == 0x1C) smu.Hsmp.GetSocketFreqRange = 0x0;
+                if (smu.Hsmp.GetCurrentIoBandwidth == 0x1D) smu.Hsmp.GetCurrentIoBandwidth = 0x0;
+                if (smu.Hsmp.GetCurrentXgmiBandwidth == 0x1E) smu.Hsmp.GetCurrentXgmiBandwidth = 0x0;
+                if (smu.Hsmp.SetGMI3LinkWidthRange == 0x1F) smu.Hsmp.SetGMI3LinkWidthRange = 0x0;
+                if (smu.Hsmp.ControlPcieLinkRate == 0x20) smu.Hsmp.ControlPcieLinkRate = 0x0;
+                if (smu.Hsmp.PwrEfficiencyModeSelection == 0x21) smu.Hsmp.PwrEfficiencyModeSelection = 0x0;
+                if (smu.Hsmp.SetDfPstateRange == 0x22) smu.Hsmp.SetDfPstateRange = 0x0;
+            }
+            if (hsmpVersion < 3) //14h
+            {
+                if (smu.Hsmp.GetLclkDpmLevelRange == 0x13) smu.Hsmp.GetLclkDpmLevelRange = 0x0;
+                if (smu.Hsmp.GetMaxDDRBandwidthAndUtilization == 0x14) smu.Hsmp.GetMaxDDRBandwidthAndUtilization = 0x0;
+            }
+            if (hsmpVersion < 2) //12h
+            {
+                if (smu.Hsmp.SetLclkDpmLevelRange == 0x12) smu.Hsmp.SetLclkDpmLevelRange = 0x0;
+            }
         }
 
         // [31-28] ccd index
@@ -676,23 +777,66 @@ namespace ZenStates.Core
             return (int)cmd.Scalar;
         }
 
-        public int GetBoostLimit()
+        public int GetBoostLimit(uint coreId)
         {
             var cmd = new SMUCommands.GetBoostLimit(smu);
-            cmd.Execute();
+            cmd.Execute(info.topology.cores2apicId[coreId]);
 
             return cmd.BoostLimit;
         }
 
         public int GetMaxPPTLimit()
         {
-            if (smu.Hsmp.ReadMaxSocketPowerLimit == 0x0) return -1;
+            int ret_ppt = 0;
 
-            var cmd = new SMUCommands.GetMaxPPTLimit(smu);
-            cmd.Execute();
+            if (smu.Hsmp.ReadMaxSocketPowerLimit != 0x0)
+            {
+                var cmd = new SMUCommands.GetMaxPPTLimit(smu);
+                cmd.Execute();
 
-            return cmd.PPT;
+                if (cmd.PPT > 0)
+                {
+                    ret_ppt = cmd.PPT;
+                }
+                else
+                {
+                    ret_ppt = -5;
+                }
+            }
+            
+            if (ret_ppt <= 0)
+            {
+                if (!info.PPTSupported) ret_ppt = 0;
+
+                if (smu.Rsmu.SMU_MSG_SetPPTLimit == 0x0) ret_ppt = -1;
+
+                SMU.Status status = RefreshPowerTable();
+
+                if (status == SMU.Status.OK && powerTable.PPT > 0)
+                {
+                    uint _ppt = (uint)powerTable.PPT;
+
+                    status = SetPPTLimit(9999);
+
+                    if (status == SMU.Status.OK)
+                    {
+                        status = RefreshPowerTable();
+                        if (status == SMU.Status.OK)
+                        {
+                            int maxppt = powerTable.PPT;
+                            SetPPTLimit(_ppt);
+                            ret_ppt = maxppt;
+                        }
+                        else ret_ppt = -2;
+                    }
+                    else ret_ppt = -3;
+                }
+                else ret_ppt = -4;
+            }
+
+            return ret_ppt;
         }
+
         public int GetPPTLimit()
         {
             if (smu.Hsmp.ReadSocketPowerLimit == 0x0) return -1;
@@ -702,11 +846,12 @@ namespace ZenStates.Core
 
             return cmd.PPT;
         }
+
         public int GetMaxTDCLimit()
         {
             if (!info.TDCSupported) return 0;
 
-            if (smu.Rsmu.SMU_MSG_SetTDCVDDLimit == 0x0) return 0;
+            if (smu.Rsmu.SMU_MSG_SetTDCVDDLimit == 0x0) return -1;
 
             SMU.Status status = RefreshPowerTable();
 
@@ -725,17 +870,18 @@ namespace ZenStates.Core
                         SetTDCVDDLimit(_tdc);
                         return maxtdc;
                     }
-                    else return 0;
+                    else return -2;
                 }
-                else return 0;
+                else return -3;
             }
-            else return 0;
+            else return -4;
         }
+
         public int GetMaxEDCLimit()
         {
-            if (!info.EDCSupported) return -1;
+            if (!info.EDCSupported) return 0;
 
-            if (smu.Rsmu.SMU_MSG_SetEDCVDDLimit == 0x0) return -2;
+            if (smu.Rsmu.SMU_MSG_SetEDCVDDLimit == 0x0) return -1;
 
             SMU.Status status = RefreshPowerTable();
 
@@ -754,17 +900,18 @@ namespace ZenStates.Core
                         SetEDCVDDLimit(_edc);
                         return maxedc;
                     }
-                    else return -3;
+                    else return -2;
                 }
-                else return -4;
+                else return -3;
             }
-            else return -5;
+            else return -4;
         }
+
         public int GetMaxTHMLimit()
         {
             if (!info.THMSupported) return 0;
 
-            if (smu.Rsmu.SMU_MSG_SetHTCLimit == 0x0 && smu.Mp1Smu.SMU_MSG_SetHTCLimit == 0x0) return 0;
+            if (smu.Rsmu.SMU_MSG_SetHTCLimit == 0x0 && smu.Mp1Smu.SMU_MSG_SetHTCLimit == 0x0) return -1;
 
             SMU.Status status = RefreshPowerTable();
             Thread.Sleep(25);
@@ -791,27 +938,27 @@ namespace ZenStates.Core
                         SetHTCLimitMP1(_thm);
                         return maxthm;
                     }
-                    else return 0;
+                    else return -2;
                 }
-                else return 0;
+                else return -3;
             }
-            else return 0;
+            else return -4;
         }
 
         public int GetMaxBoostLimit()
         {
             if (smu.Hsmp.ReadBoostLimit == 0x0) return 0;
 
-            uint _boost = (uint)GetBoostLimit();
+            uint _boost = (uint)GetBoostLimit(0);
 
             if (_boost > 0)
             {
-                SMU.Status status = SetBoostLimit(9999);
+                bool status = SetBoostLimitSingleCore(0, 9999);
 
-                if (status == SMU.Status.OK)
+                if (status)
                 {
-                    uint maxboost = (uint)GetBoostLimit();
-                    SetBoostLimit(_boost);
+                    uint maxboost = (uint)GetBoostLimit(0);
+                    SetBoostLimitSingleCore(0, _boost);
                     return (int)maxboost;
                 }
                 else return 0;
@@ -819,7 +966,9 @@ namespace ZenStates.Core
             else return 0;
         }
         public bool SendTestMessage() => new SMUCommands.SendTestMessage(smu).Execute().Success;
+        public bool SendHsmpTestMessage() => new SMUCommands.SendHsmpTestMessage(smu).Execute().Success;
         public uint GetSmuVersion() => new SMUCommands.GetSmuVersion(smu).Execute().args[0];
+        public uint GetHsmpVersion() => new SMUCommands.GetHsmpVersion(smu).Execute().args[0];
         public double? GetBclk() => mmio.GetBclk();
         public bool SetBclk(double blck) => mmio.SetBclk(blck);
         public SMU.Status TransferTableToDram() => new SMUCommands.TransferTableToDram(smu).Execute().status;
@@ -854,6 +1003,7 @@ namespace ZenStates.Core
         public bool SetPsmMarginAllCores(int margin) => new SMUCommands.SetPsmMarginAllCores(smu).Execute(margin).Success;
         public bool SetPsmMarginSingleCore(uint coreMask, int margin) => new SMUCommands.SetPsmMarginSingleCore(smu).Execute(coreMask, margin).Success;
         public bool SetPsmMarginSingleCore(uint core, uint ccd, uint ccx, int margin) => SetPsmMarginSingleCore(MakeCoreMask(core, ccd, ccx), margin);
+        public bool SetBoostLimitSingleCore(uint coreId, uint frequency) => new SMUCommands.SetBoostLimitPerCore(smu).Execute(info.topology.cores2apicId[coreId], frequency).Success;
         public bool SetFrequencyAllCore(uint frequency) => new SMUCommands.SetFrequencyAllCore(smu).Execute(frequency).Success;
         public bool SetFrequencySingleCore(uint coreMask, uint frequency) => new SMUCommands.SetFrequencySingleCore(smu).Execute(coreMask, frequency).Success;
         public bool SetFrequencySingleCore(uint core, uint ccd, uint ccx, uint frequency) => SetFrequencySingleCore(MakeCoreMask(core, ccd, ccx), frequency);
@@ -990,8 +1140,6 @@ namespace ZenStates.Core
                 {
                     cpuBusClock = 100;
                 }
-
-
 
                 // current temp Bit [31:21]
                 // If bit 19 of the Temperature Control register is set, there is an additional offset of 49 degrees C.
