@@ -412,11 +412,26 @@ namespace ZenStates.Core
             Rsmu.SMU_MSG_GetDldoPsmMargin = 0xD5;
             Rsmu.SMU_MSG_GetLN2Mode = 0xDD;
 
+            Rsmu.SMU_MSG_SetGpuPsmMargin = 0xA7;
+            Rsmu.SMU_MSG_GetGpuPsmMargin = 0xD7;
+            Rsmu.SMU_MSG_GetMinGfxClk = 0xCE;
+            Rsmu.SMU_MSG_GetMaxGfxClk = 0xCF;
+            Rsmu.SMU_MSG_GetCurrentGfxClk = 0xD8;
+
+            Rsmu.SMU_MSG_GetFastestCoreofSocket = 0x5C;
+
+            Rsmu.SMU_MSG_GetCurrentLCLKMinMax = 0xA5;
+            Rsmu.SMU_MSG_IsEXPOProfileApplied = 0x35;
+            Rsmu.SMU_MSG_ApplyEXPOProfile = 0x92;
+
             // HSMP
+            Hsmp.SMU_ADDR_MSG = 0x0;
+            Hsmp.SMU_ADDR_RSP = 0x0;
+            Hsmp.SMU_ADDR_ARG = 0x0;
+            /*
             Hsmp.SMU_ADDR_MSG = 0x3B10534;
             Hsmp.SMU_ADDR_RSP = 0x3B10980;
             Hsmp.SMU_ADDR_ARG = 0x3B109E0;
-            /*
             Hsmp.GetInterfaceVersion = 0x3;
             Hsmp.ReadSocketPower = 0x4;
             Hsmp.WriteSocketPowerLimit = 0x5;

@@ -42,5 +42,10 @@
         public uint SMU_MSG_GetOverClockingSupport { get; set; } = 0x0;
         public uint SMU_MSG_GetMinGfxClk { get; set; } = 0x0;
         public uint SMU_MSG_GetMaxGfxClk { get; set; } = 0x0;
+        public uint SMU_MSG_GetCurrentGfxClk { get; set; } = 0x0;
+        public uint SMU_MSG_GetCurrentLCLKMinMax { get; set; } = 0x0;
+        public uint SMU_MSG_IsEXPOProfileApplied { get; set; } = 0x0;
+        public uint SMU_MSG_ApplyEXPOProfile { get; set; } = 0x0;
+
     }
 }
