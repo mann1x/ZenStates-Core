@@ -66,6 +66,8 @@ namespace ZenStates.Core
             Rembrandt,
             Lucienne,
             Raphael,
+            Phoenix,
+            Mendocino,
         };
 
 
@@ -638,7 +640,13 @@ namespace ZenStates.Core
                     case 0x61:
                         codeName = CodeName.Raphael;
                         break;
-
+                    case 0x74:
+                    case 0x78:
+                        codeName = CodeName.Phoenix;
+                        break;
+                    case 0xa0:
+                        codeName = CodeName.Mendocino;
+                        break;
                     default:
                         codeName = CodeName.Unsupported;
                         break;
@@ -707,9 +715,11 @@ namespace ZenStates.Core
                 // Zen2 APU, Zen3 APU ?
                 case CodeName.Renoir:
                 case CodeName.Lucienne:
+                case CodeName.Mendocino:
                 case CodeName.Cezanne:
                 case CodeName.VanGogh:
                 case CodeName.Rembrandt:
+                case CodeName.Phoenix:
                     svi.coreAddress = Constants.F17H_M60H_SVI_TEL_PLANE0;
                     svi.socAddress = Constants.F17H_M60H_SVI_TEL_PLANE1;
                     break;
