@@ -706,7 +706,11 @@ namespace ZenStates.Core
 
             { Cpu.CodeName.VanGogh, new APUSettings2_Vangogh() },
             { Cpu.CodeName.Rembrandt, new APUSettings2() },
-
+            // Still unknown. The MP1 addresses are the same as on Rembrandt according to coreboot
+            // https://github.com/coreboot/coreboot/blob/master/src/soc/amd/mendocino/include/soc/smu.h
+            // https://github.com/coreboot/coreboot/blob/master/src/soc/amd/phoenix/include/soc/smu.h
+            { Cpu.CodeName.Phoenix, new APUSettings2() },
+            { Cpu.CodeName.Mendocino, new APUSettings2() },
             { Cpu.CodeName.Unsupported, new UnsupportedSettings() },
         };
 

@@ -6,9 +6,12 @@
         public override CmdResult Execute()
         {
             if (CanExecute())
-                result.status = smu.SendHsmpCommand(smu.Hsmp.GetInterfaceVersion, ref result.args);
+            {
 
-            return base.Execute();
+                result.status = smu.SendHsmpCommand(smu.Hsmp.GetInterfaceVersion, ref result.args);
+            }
+
+            return base.Execute();  
         }
     }
 }

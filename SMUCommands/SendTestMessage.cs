@@ -2,17 +2,20 @@
 {
     internal class SendTestMessage : BaseSMUCommand
     {
-        public SendTestMessage(SMU smu) : base(smu) { }
-        public bool success = true;
-        public override CmdResult Execute()
+        private readonly Mailbox mbox;
+
+        public bool IsSumCorrect = false;
+        public SendTestMessage(SMU smu, Mailbox mbox = null) : base(smu)
+        {
+            this.mbox = mbox ?? smu.Rsmu;
+        }
+        public CmdResult Execute(uint testArg = 1)
         {
             if (CanExecute())
             {
-                result.args[0] = 1;
-                result.status = smu.SendRsmuCommand(smu.Hsmp.SMU_MSG_TestMessage, ref result.args);
-
-                if (result.status != SMU.Status.OK) success = false;
-                if (result.args[0] != 2) success = false;
+                result.args[0] = testArg;
+                result.status = smu.SendSmuCommand(mbox, mbox.SMU_MSG_TestMessage, ref result.args);
+                this.IsSumCorrect = result.args[0] == testArg + 1;
             }
 
             return base.Execute();

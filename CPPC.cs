@@ -10,139 +10,65 @@ namespace ZenStates.Core
     {
         internal readonly IOModule io;
         internal readonly ACPI acpi;
-        public CPPCTable Table;
+        public CPPCTable AcpiTable;
 
-        private static readonly Dictionary<int, string> ProcOdtDict = new Dictionary<int, string>
-        {
-            {0, "Hi-Z"},
-            {1, "480.0 Ω"},
-            {2, "240.0 Ω"},
-            {3, "160.0 Ω"},
-            {4, "120.0 Ω"},
-            {5, "96.0 Ω"},
-            {6, "80.0 Ω"},
-            {7, "68.6 Ω"},
-            {12, "60.0 Ω"},
-            {13, "53.3 Ω"},
-            {14, "48.0 Ω"},
-            {15, "43.6 Ω"},
-            {28, "40.0 Ω"},
-            {29, "36.9 Ω"},
-            {30, "34.3 Ω"},
-            {31, "32.0 Ω"},
-            {60, "30.0 Ω"},
-            {61, "28.2 Ω"},
-            {62, "26.7 Ω"},
-            {63, "25.3 Ω"},
-        };
-
-        private static readonly Dictionary<int, string> ProcDataDrvStrenDict = new Dictionary<int, string>
-        {
-            {2, "240.0 Ω"},
-            {4, "120.0 Ω"},
-            {6, "80.0 Ω"},
-            {12, "60.0 Ω"},
-            {14, "48.0 Ω"},
-            {28, "40.0 Ω"},
-            {30, "34.3 Ω"},
-        };
-
-        private static readonly Dictionary<int, string> DramDataDrvStrenDict = new Dictionary<int, string>
-        {
-            {0, "34.0 Ω"},
-            {1, "40.0 Ω"},
-            {2, "48.0 Ω"},
-        };
-
-        private static readonly Dictionary<int, string> CadBusDrvStrenDict = new Dictionary<int, string>
-        {
-            {30, "30.0 Ω"},
-            {40, "40.0 Ω"},
-            {60, "60.0 Ω"},
-            {120, "120.0 Ω"},
-        };
-
-        // RttNom, RttPark
-        private static readonly Dictionary<int, string> RttDict = new Dictionary<int, string>
-        {
-            {0, "Off"},
-            {1, "RZQ/1"},
-            {2, "RZQ/2"},
-            {3, "RZQ/3"},
-            {4, "RZQ/4"},
-            {5, "RZQ/5"},
-            {6, "RZQ/6"},
-            {7, "RZQ/7"},
-        };
+        public bool CPPC_Enable;
+        public bool CPPC_MSR;
+        public bool CPPC_ACPI;
+        public int CPPC_ACPI_Version;
 
         private static string GetByKey(Dictionary<int, string> dict, int key)
         {
             return dict.TryGetValue(key, out string output) ? output : "N/A";
         }
 
-        public class TProcODT
-        {
-            public override string ToString()
-            {
-                return base.ToString();
-            }
-        }
 
-        public static string GetProcODTString(int key) => GetByKey(ProcOdtDict, key);
-        public static string GetProcDataDrvStrenString(int key) => GetByKey(ProcOdtDict, key);
-        public static string GetDramDataDrvStrenString(int key) => GetByKey(DramDataDrvStrenDict, key);
-        public static string GetCadBusDrvStrenString(int key) => GetByKey(CadBusDrvStrenDict, key);
-        public static string GetRttString(int key) => GetByKey(RttDict, key);
-
-        [Serializable]
-        [StructLayout(LayoutKind.Explicit, Pack = 4)]
+        [StructLayout(LayoutKind.Explicit)]
         public struct CPPCData
         {
-            [FieldOffset(8920)] public int SMTEn;
-            [FieldOffset(8924)] public int MemClk;
-            [FieldOffset(8928)] public int Tcl;
-            [FieldOffset(8932)] public int Trcd;
-            [FieldOffset(8936)] public int Trp;
-            [FieldOffset(8940)] public int Tras;
-            [FieldOffset(8944)] public int Trc;
-            [FieldOffset(8948)] public int Twr;
-            [FieldOffset(8952)] public int Trfc;
-            [FieldOffset(8956)] public int Trfc2;
-            [FieldOffset(8960)] public int Trfcsb;
-            [FieldOffset(8964)] public int Trtp;
-            [FieldOffset(8968)] public int TrrdL;
-            [FieldOffset(8972)] public int TrrdS;
-            [FieldOffset(8976)] public int Tfaw;
-            [FieldOffset(8980)] public int TwtrL;
-            [FieldOffset(8984)] public int TwtrS;
-            [FieldOffset(8988)] public int TrdrdScL;
-            [FieldOffset(8992)] public int TrdrdSc;
-            [FieldOffset(8996)] public int TrdrdSd;
-            [FieldOffset(9000)] public int TrdrdDd;
-            [FieldOffset(9004)] public int TwrwrScL;
-            [FieldOffset(9008)] public int TwrwrSc;
-            [FieldOffset(9012)] public int TwrwrSd;
-            [FieldOffset(9016)] public int TwrwrDd;
-            [FieldOffset(9020)] public int Twrrd;
-            [FieldOffset(9024)] public int Trdwr;
+            [FieldOffsetAttribute(0)]
+            public uint NumEntries;
+            [FieldOffsetAttribute(0)]
+            public uint Revision;
+            [FieldOffsetAttribute(0)]
+            public uint HighestPerformance;
+            [FieldOffsetAttribute(0)]
+            public uint NominalPerformance;
+            [FieldOffsetAttribute(0)]
+            public uint LowestNonlinearPerformance;
+            [FieldOffsetAttribute(0)]
+            public uint LowestPerformance;
+            [FieldOffsetAttribute(0)]
+            public uint GuaranteedPerformanceRegister;
+            [FieldOffsetAttribute(0)]
+            public uint DesiredPerformanceRegister;
+            [FieldOffsetAttribute(0)]
+            public uint MinimumPerformanceRegister;
+            [FieldOffsetAttribute(0)]
+            public uint MaximumPerformanceRegister;
+            [FieldOffsetAttribute(0)]
+            public uint PerformanceReductionToleranceRegister;
+            [FieldOffsetAttribute(0)]
+            public uint TimeWindowRegister;
+            [FieldOffsetAttribute(0)]
+            public ulong CounterWraparoundTime;
+            [FieldOffsetAttribute(0)]
+            public ulong ReferencePerformanceCounterRegister;
+            [FieldOffsetAttribute(0)]
+            public ulong DeliveredPerformanceCounterRegister;
+            [FieldOffsetAttribute(0)]
+            public uint PerformanceLimitedRegister;
+            [FieldOffsetAttribute(0)]
+            public uint CPPCEnableRegister;
+            [FieldOffsetAttribute(0)]
+            public uint AutonomousSelectionEnable;
+            [FieldOffsetAttribute(0)]
+            public uint AutonomousActivityWindowRegister;
+            [FieldOffsetAttribute(0)]
+            public uint EnergyPerformancePreferenceRegister;
+            [FieldOffsetAttribute(0)]
+            public uint ReferencePerformance;
 
-            // DRAM Controller Configuration
-            [FieldOffset(9028)] public int CadBusDrvStren; // AddrCmdDrvStren
-            [FieldOffset(9032)] public int ProcDataDrvStren;
-            [FieldOffset(9036)] public int ProcODT;
-            [FieldOffset(9040)] public int DramDataDrvStren;
-            [FieldOffset(9044)] public int RttNomWr;
-            [FieldOffset(9048)] public int RttNomRd;
-
-            // Data Bus Configuration
-            [FieldOffset(9052)] public int RttWr;
-            [FieldOffset(9056)] public int RttPark;
-            [FieldOffset(9060)] public int RttParkDqs;
-
-            // DRAM Voltages
-            [FieldOffset(9096)] public int MemVddio;
-            [FieldOffset(9100)] public int MemVddq;
-            [FieldOffset(9104)] public int MemVpp;
         }
 
         [Serializable]
@@ -169,7 +95,11 @@ namespace ZenStates.Core
         {
             this.io = io;
             this.acpi = new ACPI(io);
-            this.Table = new CPPCTable();
+            this.AcpiTable = new CPPCTable();
+            CPPC_Enable = false;
+            CPPC_MSR = false;
+            CPPC_ACPI = false;
+
             this.Init();
         }
 
@@ -188,7 +118,7 @@ namespace ZenStates.Core
                             SDTHeader hdr = acpi.GetHeader<SDTHeader>(addr);
                             if (hdr.Signature == Signature(TableSignature.SSDT) && hdr.OEMTableID == SignatureUL("CPUSSDT"))
                             {
-                                this.Table.BaseAddress = addr;
+                                this.AcpiTable.BaseAddress = addr;
                                 return ParseSdtTable(io.ReadMemory(new IntPtr(addr), (int)hdr.Length));
                             }
                         }
@@ -202,7 +132,9 @@ namespace ZenStates.Core
 
         private void Init()
         {
-            this.Table.acpiTable = GetCpuSsdtTable();
+
+
+            //this.Table.acpiTable = GetCpuSsdtTable();
 
             /*
             if (this.Table.acpiTable != null)
@@ -219,15 +151,15 @@ namespace ZenStates.Core
             }
             */
             //this.Table.BaseAddress = 0;
-            this.Table.Length = (int)this.Table.acpiTable.Value.Data.Length;
-            this.Refresh();
+            //this.Table.Length = (int)this.Table.acpiTable.Value.Data.Length;
+            //this.Refresh();
         }
 
-        public bool Refresh()
+        public bool RefreshAcpiTable()
         {
             try
             {
-                this.Table.rawCPPCTable = this.io.ReadMemory(new IntPtr(this.Table.BaseAddress), this.Table.Length);
+                this.AcpiTable.rawCPPCTable = this.io.ReadMemory(new IntPtr(this.AcpiTable.BaseAddress), this.AcpiTable.Length);
                 // this.Table.Data = Utils.ByteArrayToStructure<CPPCData>(this.Table.rawCPPCTable);
                 // int test = Utils.FindSequence(rawTable, 0, BitConverter.GetBytes(0x3ae));
                 return true;

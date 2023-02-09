@@ -17,8 +17,6 @@ namespace ZenStates.Core
         private static ushort group0 = 0x0;
         private static ulong bitmask0 = (1 << 0);
         private GroupAffinity cpu0Affinity = new GroupAffinity(group0, bitmask0);
-        public int baseClock = 0;
-        public int baseMulti = 0;
 
         public float ccd1Temp { get; private set; }
         public float ccd2Temp { get; private set; }
@@ -100,8 +98,9 @@ namespace ZenStates.Core
             public uint physicalCores;
             public uint threadsPerCore;
             public uint cpuNodes;
-            public uint? coreDisableMap;
-			public uint[] performanceOfCore;
+            public uint coreDisableMap;
+            public uint coreLayout;
+            public uint[] performanceOfCore;
             public uint[] apicIds;
             public uint[] cores2apicId;
         }
@@ -121,6 +120,7 @@ namespace ZenStates.Core
             public SVI2 svi2;
             public AOD aod;
             public CPPC cppc;
+            public bool cppcMSR;
             public bool PPTSupported;
             public bool TDCSupported;
             public bool EDCSupported;
@@ -259,8 +259,13 @@ namespace ZenStates.Core
 
                 uint ccdOffset = 0;
 
-                for (int i = 0; i < topology.ccds; i++)
+                for (int i = 0; i < 4; i++)
                 {
+                    if (i >= topology.ccds)
+                    {
+                        topology.coreLayout |= (uint)0xFF << (i * 8);
+                        continue;
+                    }
                     if (Utils.GetBits(ccdEnableMap, i, 1) == 1)
                     {
                         if (ReadDwordEx(coreDisableMapAddress | ccdOffset, ref coreFuse))
@@ -299,7 +304,7 @@ namespace ZenStates.Core
 
             info.vendor = GetVendor();
             if (info.vendor != Constants.VENDOR_AMD && info.vendor != Constants.VENDOR_HYGON)
-                Console.WriteLine("Not an AMD CPU");
+                throw new Exception("Not an AMD CPU");
 
             if (Opcode.Cpuid(0x00000001, 0, out uint eax, out uint ebx, out uint ecx, out uint edx))
             {
@@ -349,7 +354,7 @@ namespace ZenStates.Core
                 systemInfo = new SystemInfo(info, smu);
                 powerTable = new PowerTable(smu, io, mmio);
 
-                smu.hsmpVersion = GetHsmpVersion();
+                smu.hsmpVersion = SendTestMessage(1, smu.Hsmp) ? GetHsmpVersion() : 0;
 
                 SetHsmpCommands(smu.hsmpVersion);
 
@@ -378,8 +383,8 @@ namespace ZenStates.Core
             cpuVcore = 0;
             cpuVsoc = 0;
             cpuBusClock = 0;
-            baseClock = 0;
-            baseMulti = 0;
+            info.cppcMSR = false;
+
 
             RefreshSensors();
 
@@ -441,6 +446,17 @@ namespace ZenStates.Core
             uint coresInCcx = 8 / ccxInCcd;
 
             return ((ccd << 4 | ccx % ccxInCcd & 0xF) << 4 | core % coresInCcx & 0xF) << 20;
+        }
+        
+        public uint GetCoreMask(int coreIndex)
+        {
+            uint ccxInCcd = info.family == Cpu.Family.FAMILY_19H ? 1U : 2U;
+            uint coresInCcx = 8 / ccxInCcd;
+
+            uint ccd = Convert.ToUInt32(coreIndex / 8);
+            uint ccx = Convert.ToUInt32(coreIndex / coresInCcx - ccxInCcd * ccd);
+            uint core = Convert.ToUInt32(coreIndex % coresInCcx);
+            return MakeCoreMask(core, ccd, ccx);
         }
 
         public bool ReadDwordEx(uint addr, ref uint data)
@@ -839,12 +855,16 @@ namespace ZenStates.Core
 
         public int GetPPTLimit()
         {
-            if (smu.Hsmp.ReadSocketPowerLimit == 0x0) return -1;
+            if (smu.Hsmp.ReadSocketPowerLimit == 0x0) { 
+                var cmd = new SMUCommands.GetPPTLimit(smu);
+                cmd.Execute();
+                if (cmd.PPT > 0) return cmd.PPT;
+                if (info.PPTSupported && powerTable.PPT > 0) return powerTable.PPT;
+            }
 
-            var cmd = new SMUCommands.GetPPTLimit(smu);
-            cmd.Execute();
+            if (!info.PPTSupported) return 0;
 
-            return cmd.PPT;
+            return powerTable.PPT;
         }
 
         public int GetMaxTDCLimit()
@@ -965,8 +985,12 @@ namespace ZenStates.Core
             }
             else return 0;
         }
-        public bool SendTestMessage() => new SMUCommands.SendTestMessage(smu).Execute().Success;
-        public bool SendHsmpTestMessage() => new SMUCommands.SendHsmpTestMessage(smu).Execute().Success;
+        public bool SendTestMessage(uint arg = 1, Mailbox mbox = null)
+        {
+            var cmd = new SMUCommands.SendTestMessage(smu, mbox);
+            SMUCommands.CmdResult result = cmd.Execute(arg);
+            return result.Success && cmd.IsSumCorrect;
+        }
         public uint GetSmuVersion() => new SMUCommands.GetSmuVersion(smu).Execute().args[0];
         public uint GetHsmpVersion() => new SMUCommands.GetHsmpVersion(smu).Execute().args[0];
         public double? GetBclk() => mmio.GetBclk();

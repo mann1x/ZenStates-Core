@@ -19,7 +19,11 @@
             {
                 result.args[0] = Utils.MakePsmMarginArg(margin);
                 if (smu.Mp1Smu.SMU_MSG_SetAllDldoPsmMargin > 0)
+                {
                     result.status = smu.SendMp1Command(smu.Mp1Smu.SMU_MSG_SetAllDldoPsmMargin, ref result.args);
+                    if (result.status != SMU.Status.OK)
+                        result.status = smu.SendRsmuCommand(smu.Rsmu.SMU_MSG_SetAllDldoPsmMargin, ref result.args);
+                }
                 else
                     result.status = smu.SendRsmuCommand(smu.Rsmu.SMU_MSG_SetAllDldoPsmMargin, ref result.args);
             }
