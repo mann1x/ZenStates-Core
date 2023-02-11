@@ -22,6 +22,7 @@ namespace ZenStates.Core
         internal const uint THM_CUR_TEMP = 0x00059800;
         internal const uint THM_CUR_TEMP_RANGE_SEL_MASK = 0x80000;
         internal const uint F17H_PCI_CONTROL_REGISTER = 0x60;
+        internal const uint MSR_CPUID_EXTFEATURES = 0xC0011005;
         internal const uint MSR_PSTATE_0 = 0xC0010064;
         internal const uint MSR_PSTATE_CTL = 0xC0010062;
         internal const uint MSR_HWCR = 0xC0010015;

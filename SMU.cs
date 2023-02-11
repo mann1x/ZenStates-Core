@@ -111,8 +111,8 @@ namespace ZenStates.Core
             // Check all the arguments and don't execute if invalid
             // If the mailbox addresses are not set, they would have the default value of 0x0
             // TODO: Add custom status for not implemented command?
+            if (mailbox == null) return Status.UNKNOWN_CMD;
             if (msg == 0
-                || mailbox == null
                 || mailbox.SMU_ADDR_MSG == 0
                 || mailbox.SMU_ADDR_ARG == 0
                 || mailbox.SMU_ADDR_RSP == 0)
@@ -423,6 +423,20 @@ namespace ZenStates.Core
             Rsmu.SMU_MSG_GetCurrentLCLKMinMax = 0xA5;
             Rsmu.SMU_MSG_IsEXPOProfileApplied = 0x35;
             Rsmu.SMU_MSG_ApplyEXPOProfile = 0x92;
+
+            Mp1Smu.SMU_MSG_EnableOcMode = 0x0;
+            Mp1Smu.SMU_MSG_DisableOcMode = 0x0;
+            Mp1Smu.SMU_MSG_SetOverclockFrequencyPerCore = 0x0;
+            Mp1Smu.SMU_MSG_SetOverclockCpuVid = 0x0;
+            Mp1Smu.SMU_MSG_SetPBOScalar = 0x0;
+            Mp1Smu.SMU_MSG_GetSome1Clock = 0x0;
+
+            Mp1Smu.SMU_MSG_SetTDCVDDLimit = 0x3C;
+            Mp1Smu.SMU_MSG_SetEDCVDDLimit = 0x3D;
+            Mp1Smu.SMU_MSG_SetPPTLimit = 0x3E;
+            Mp1Smu.SMU_MSG_SetHTCLimit = 0x3F;
+
+            //Verified
 
             // HSMP
             Hsmp.SMU_ADDR_MSG = 0x0;

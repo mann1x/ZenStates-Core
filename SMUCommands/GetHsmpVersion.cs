@@ -7,7 +7,6 @@
         {
             if (CanExecute())
             {
-
                 result.status = smu.SendHsmpCommand(smu.Hsmp.GetInterfaceVersion, ref result.args);
             }
 

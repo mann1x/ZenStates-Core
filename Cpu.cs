@@ -101,10 +101,16 @@ namespace ZenStates.Core
             public uint threadsPerCore;
             public uint cpuNodes;
             public uint coreDisableMap;
+            public uint coreEnabledMap;
             public uint coreLayout;
             public uint[] performanceOfCore;
-            public uint[] apicIds;
+            public uint[] logical2apicIds;
+            public uint[] coreIds;
             public uint[] cores2apicId;
+            // Index = CorePhysicalIndex = { CoreId, CCX}
+            public uint[,] coreCcxMap;
+            // Index = CoreId = { CorePhysicalIndex, CCX, CCD}
+            public uint[,] coreFullMap;
         }
         public struct CPUInfo
         {
@@ -147,7 +153,7 @@ namespace ZenStates.Core
             if (Opcode.Cpuid(0x00000001, 0, out uint eax, out uint ebx, out uint ecx, out uint edx))
                 topology.logicalCores = Utils.GetBits(ebx, 16, 8);
             else
-                throw new ApplicationException(InitializationExceptionText);
+                throw new ApplicationException($"{InitializationExceptionText} Phase 1");
 
             if (Opcode.Cpuid(0x8000001E, 0, out eax, out ebx, out ecx, out edx))
             {
@@ -158,11 +164,13 @@ namespace ZenStates.Core
                     topology.cores = topology.logicalCores;
                 else
                     topology.cores = topology.logicalCores / topology.threadsPerCore;
+
             }
             else
             {
-                throw new ApplicationException(InitializationExceptionText);
+                throw new ApplicationException($"{InitializationExceptionText} Phase 2");
             }
+
             try
             {
                 topology.performanceOfCore = new uint[topology.cores];
@@ -175,48 +183,8 @@ namespace ZenStates.Core
                         topology.performanceOfCore[i / topology.threadsPerCore] = 0;
                 }
 
-                topology.apicIds = new uint[topology.logicalCores];
-                topology.cores2apicId = new uint[topology.logicalCores];
-
-                Process Proc = Process.GetCurrentProcess();
-                IntPtr _systemAffinity = Proc.ProcessorAffinity;
-                uint prevCoreSharedId = uint.MaxValue;
-                uint CoreSharedId = uint.MaxValue;
-                uint CoreId = 0;
-
-                for (int i = 0; i < topology.logicalCores; i++)
-                {
-                    ulong bitmask = (ulong)1 << i;
-                    Proc.ProcessorAffinity = (IntPtr)bitmask;
-                    
-                    foreach(ProcessThread thrd in Proc.Threads)
-                    {
-                        thrd.ProcessorAffinity = (IntPtr)bitmask;
-                    }
-
-                    // LocalApicId
-                    if (Opcode.Cpuid(0x00000001, 0, out eax, out ebx, out ecx, out edx))
-                        topology.apicIds[i] = Utils.GetBits(ebx, 24, 8);
-
-                    CoreSharedId = topology.apicIds[i] >> (int)Math.Log(topology.threadsPerCore, 2);
-
-                    if (CoreSharedId != prevCoreSharedId)
-                    {
-                        topology.cores2apicId[CoreId] = topology.apicIds[i];
-                        CoreId++;
-                    }
-                    prevCoreSharedId = CoreSharedId;
-                }
-
-                Proc.ProcessorAffinity = _systemAffinity;
-
-                foreach (ProcessThread thrd in Proc.Threads)
-                {
-                    thrd.ProcessorAffinity = _systemAffinity;
-                }
-
             }
-            catch {  }
+            catch { }
 
             uint ccdsPresent = 0, ccdsDown = 0, coreFuse = 0;
             uint fuse1 = 0x5D218;
@@ -243,41 +211,183 @@ namespace ZenStates.Core
                 fuse2 += 0x40; // 0x5D25C
             }
 
+            bool fuseRead = false;
+
+            uint ccdEnableMap = 0;
+            uint ccdDisableMap = 0;
+            uint coreDisableMapAddress = 0;
+            uint enabledCcd = 0;
+
             if (ReadDwordEx(fuse1, ref ccdsPresent) && ReadDwordEx(fuse2, ref ccdsDown))
             {
-                uint ccdEnableMap = Utils.GetBits(ccdsPresent, 22, 8);
-                uint ccdDisableMap = Utils.GetBits(ccdsPresent, 30, 2) | (Utils.GetBits(ccdsDown, 0, 6) << 2);
-                uint coreDisableMapAddress = 0x30081800 + offset;
-                uint enabledCcd = Utils.CountSetBits(ccdEnableMap);
+                ccdEnableMap = Utils.GetBits(ccdsPresent, 22, 8);
+                ccdDisableMap = Utils.GetBits(ccdsPresent, 30, 2) | (Utils.GetBits(ccdsDown, 0, 6) << 2);
+                coreDisableMapAddress = 0x30081800 + offset;
+                enabledCcd = Utils.CountSetBits(ccdEnableMap);
 
                 topology.ccds = enabledCcd > 0 ? enabledCcd : 1;
                 topology.ccxs = topology.ccds * ccxPerCcd;
                 topology.physicalCores = topology.ccxs * 8 / ccxPerCcd;
 
-                if (ReadDwordEx(coreDisableMapAddress, ref coreFuse))
-                    topology.coresPerCcx = (8 - Utils.CountSetBits(coreFuse & 0xff)) / ccxPerCcd;
-                else
-                    Console.WriteLine("Could not read core fuse!");
+                fuseRead = true;
+            }
+                
+            #region Phase3
+            
+            topology.coreEnabledMap = 0x00000000;
+            topology.coreLayout = 0x00000000;
+            topology.coreCcxMap = new uint[topology.physicalCores, 2];
+            topology.coreFullMap = new uint[topology.cores, 3];
+            uint coreId = 0, _logicalCoreId = 0, logical2apicId = 0;
 
-                uint ccdOffset = 0;
+            try
+            {
+                topology.coreIds = new uint[topology.cores];
+                topology.logical2apicIds = new uint[topology.logicalCores];
+                topology.cores2apicId = new uint[topology.cores];
 
-                for (int i = 0; i < 4; i++)
+                Process Proc = Process.GetCurrentProcess();
+                IntPtr _systemAffinity = Proc.ProcessorAffinity;
+                uint apicIdSharedId = uint.MaxValue, prevApicIdSharedId = uint.MaxValue;
+                uint numSharingCache = 0, ccxSharing = 1, numSharingCacheId = uint.MaxValue, prevNumSharingCacheId = uint.MaxValue;
+
+                for (int i = 0; i < topology.logicalCores; i++)
                 {
-                    if (i >= topology.ccds)
+                    ulong bitmask = (ulong)1 << i;
+                    Proc.ProcessorAffinity = (IntPtr)bitmask;
+
+
+                    foreach (ProcessThread thrd in Proc.Threads)
                     {
-                        topology.coreLayout |= (uint)0xFF << (i * 8);
-                        continue;
-                    }
-                    if (Utils.GetBits(ccdEnableMap, i, 1) == 1)
-                    {
-                        if (ReadDwordEx(coreDisableMapAddress | ccdOffset, ref coreFuse))
-                            topology.coreDisableMap |= (coreFuse & 0xff) << i * 8;
-                        else
-                            Console.WriteLine($"Could not read core fuse for CCD{i}!");
+                        thrd.ProcessorAffinity = (IntPtr)bitmask;
                     }
 
-                    ccdOffset += 0x2000000;
+                    // LocalApicId
+                    if (Opcode.Cpuid(0x00000001, 0, out eax, out ebx, out ecx, out edx))
+                        logical2apicId = Utils.GetBits(ebx, 24, 8);
+
+                    // numSharingCache
+                    if (Opcode.Cpuid(0x8000001D, 3, out eax, out ebx, out ecx, out edx))
+                        numSharingCache = Utils.GetBits(eax, 14, 12);
+                    numSharingCache = topology.threadsPerCore > 1 ? numSharingCache + 1 : (numSharingCache * 2) + 1;
+
+                    // CoreId
+                    if (Opcode.Cpuid(0x8000001E, 0, out eax, out ebx, out ecx, out edx))
+                        _logicalCoreId = Utils.GetBits(ebx, 0, 8);
+
+                    topology.logical2apicIds[i] = logical2apicId;
+
+                    apicIdSharedId = logical2apicId >> (int)Math.Log(topology.threadsPerCore, 2);
+
+                    numSharingCacheId = (uint)_logicalCoreId >> (int)Math.Log(numSharingCache, 2);
+
+                    prevNumSharingCacheId = prevNumSharingCacheId == uint.MaxValue ? numSharingCacheId : prevNumSharingCacheId;
+
+                    if (numSharingCacheId != prevNumSharingCacheId)
+                        ccxSharing++;
+
+                    if (apicIdSharedId != prevApicIdSharedId)
+                    {
+                        topology.coreIds[coreId] = _logicalCoreId;
+                        topology.cores2apicId[coreId] = logical2apicId;
+                        topology.coreCcxMap[coreId, 0] = 1;
+                        topology.coreCcxMap[coreId, 1] = ccxSharing;
+                        coreId++;
+                    }
+
+                    prevNumSharingCacheId = numSharingCacheId;
+                    prevApicIdSharedId = apicIdSharedId;
                 }
+
+                Proc.ProcessorAffinity = _systemAffinity;
+
+                foreach (ProcessThread thrd in Proc.Threads)
+                {
+                    thrd.ProcessorAffinity = _systemAffinity;
+                }
+
+            }
+            catch (Exception ex)
+            {
+                throw new ApplicationException($"{InitializationExceptionText} Phase 3 - coreId={coreId} logicalCoreId={_logicalCoreId} logical2apicId={logical2apicId} Exception: {ex}");
+            }
+
+            #endregion
+
+            if (fuseRead)
+            {
+                try { 
+                    if (ReadDwordEx(coreDisableMapAddress, ref coreFuse))
+                        topology.coresPerCcx = (8 - Utils.CountSetBits(coreFuse & 0xff)) / ccxPerCcd;
+                    else
+                        Console.WriteLine("Could not read core fuse!");
+
+                    uint ccdOffset = 0;
+                    uint xbit, ccxSharing, ccxSharingPrev = 1;
+                    int p = 0, enabledOffset = 0;
+                    int ccd = 1;
+
+                    for (int i = 0; i < topology.coreCcxMap.GetLength(0); ++i)
+                    {
+                        xbit = topology.coreCcxMap[i, 0];
+                        ccxSharing = topology.coreCcxMap[i, 1];
+
+                        if ((ccxPerCcd == 1 && ccxSharing != ccxSharingPrev) || (ccxPerCcd == 2 && (ccxSharing != ccxSharingPrev && ccxSharing != ccxSharingPrev + 1)))
+                        {
+                            enabledOffset = ((8 * ccd) - i) / ccd;
+                            for (int f = 0; f < enabledOffset; f++)
+                            {
+                                topology.coreEnabledMap |= (uint)0 << p;
+                                p++;
+                            };
+                            ccd = (ccxPerCcd == 1) || (ccxSharing & (ccxSharing - 1)) == 0 ? ccd + 1 : ccd;
+                            ccxSharingPrev = ccxSharing;
+                        }
+                        if (xbit == 0) continue;
+                        topology.coreEnabledMap |= (uint)1 << p;
+                        p++;
+                    }
+
+                    int _CoreIndex = 0;
+
+                    for (int i = 0; i < topology.ccds; i++)
+                    {
+                        if (Utils.GetBits(ccdEnableMap, i, 1) == 1)
+                        {
+                            if (ReadDwordEx(coreDisableMapAddress | ccdOffset, ref coreFuse))
+                            {
+                                topology.coreDisableMap |= (coreFuse & 0xff) << i * 8;
+                                uint _coreDisableMap = (topology.coreDisableMap >> i * 8) & 0xff;
+                                uint _coreEnabledMap = (topology.coreEnabledMap >> i * 8) & 0xff;
+                                p = i * 8;
+                                for (int b = 0; b < 8; ++b, ++p)
+                                {
+                                    uint ebit = Utils.GetBits(_coreEnabledMap, b, 1);
+                                    uint dbit = Utils.GetBits(_coreDisableMap, b, 1);
+                                    if (dbit == 1) { topology.coreLayout |= (uint)0 << p; p++; }
+                                    topology.coreLayout |= (uint)ebit << p;
+                                    if (ebit == 1)
+                                    {
+                                        topology.coreFullMap[_CoreIndex, 0] = (uint)p;
+                                        topology.coreFullMap[_CoreIndex, 1] = topology.coreCcxMap[_CoreIndex, 1];
+                                        topology.coreFullMap[_CoreIndex, 2] = (uint)i+1;
+                                        _CoreIndex++;
+                                    }
+                                }
+
+                            }
+                            else
+                                Console.WriteLine($"Could not read core fuse for CCD{i}!");
+
+                        }
+                        ccdOffset += 0x2000000;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    throw new ApplicationException($"{InitializationExceptionText} Phase 4 - Exception: {ex}");
+                }
+
             }
             else
             {
@@ -377,6 +487,7 @@ namespace ZenStates.Core
                 LastError = ex;
                 Status = IOModule.LibStatus.PARTIALLY_OK;
             }
+
             ccd1Temp = 0;
             ccd2Temp = 0;
             ccd1TempSupported = false;
@@ -774,6 +885,13 @@ namespace ZenStates.Core
                 return eax;
             return 0;
         }
+        public uint GetApicId(uint coreId)
+        {
+            if (info.topology.cores2apicId == null) return 0;
+            if (info.topology.cores2apicId.Length < coreId) return 0;
+
+            return info.topology.cores2apicId[coreId];
+        }
 
         public bool GetOcMode()
         {
@@ -806,7 +924,7 @@ namespace ZenStates.Core
         public int GetBoostLimit(uint coreId)
         {
             var cmd = new SMUCommands.GetBoostLimit(smu);
-            cmd.Execute(info.topology.cores2apicId[coreId]);
+            cmd.Execute(GetApicId(coreId));
 
             return cmd.BoostLimit;
         }
@@ -834,7 +952,7 @@ namespace ZenStates.Core
             {
                 if (!info.PPTSupported) ret_ppt = 0;
 
-                if (smu.Rsmu.SMU_MSG_SetPPTLimit == 0x0) ret_ppt = -1;
+                if (smu.Rsmu.SMU_MSG_SetPPTLimit == 0x0 && smu.Mp1Smu.SMU_MSG_SetPPTLimit == 0x0) ret_ppt = -1;
 
                 SMU.Status status = RefreshPowerTable();
 
@@ -843,19 +961,27 @@ namespace ZenStates.Core
                     uint _ppt = (uint)powerTable.PPT;
 
                     status = SetPPTLimit(9999);
+                    Thread.Sleep(25);
+                    SMU.Status statusmp1 = SetPPTLimitMP1(9999);
+                    Thread.Sleep(25);
 
-                    if (status == SMU.Status.OK)
+                    if (statusmp1 == SMU.Status.OK || status == SMU.Status.OK)
                     {
                         status = RefreshPowerTable();
+                        
                         if (status == SMU.Status.OK)
                         {
                             int maxppt = powerTable.PPT;
-                            SetPPTLimit(_ppt);
                             ret_ppt = maxppt;
                         }
                         else ret_ppt = -2;
                     }
                     else ret_ppt = -3;
+
+                    SetPPTLimit(_ppt);
+                    Thread.Sleep(25);
+                    SetPPTLimitMP1(_ppt);
+
                 }
                 else ret_ppt = -4;
             }
@@ -865,80 +991,101 @@ namespace ZenStates.Core
 
         public int GetPPTLimit()
         {
-            if (smu.Hsmp.ReadSocketPowerLimit == 0x0) { 
+            if (smu.Hsmp.ReadSocketPowerLimit != 0x0) { 
                 var cmd = new SMUCommands.GetPPTLimit(smu);
                 cmd.Execute();
                 if (cmd.PPT > 0) return cmd.PPT;
-                if (info.PPTSupported && powerTable.PPT > 0) return powerTable.PPT;
             }
 
-            if (!info.PPTSupported) return 0;
-
-            return powerTable.PPT;
+            if (info.PPTSupported && powerTable.PPT > 0) return powerTable.PPT;
+            return 0;
         }
 
         public int GetMaxTDCLimit()
         {
+            int ret_tdc;
+
             if (!info.TDCSupported) return 0;
 
-            if (smu.Rsmu.SMU_MSG_SetTDCVDDLimit == 0x0) return -1;
+            if (smu.Rsmu.SMU_MSG_SetTDCVDDLimit == 0x0 && smu.Mp1Smu.SMU_MSG_SetTDCVDDLimit == 0x0) return -1;
 
             SMU.Status status = RefreshPowerTable();
+            Thread.Sleep(25);
 
             if (status == SMU.Status.OK && powerTable.TDC > 0)
             {
                 uint _tdc = (uint)powerTable.TDC;
 
                 status = SetTDCVDDLimit(9999);
+                Thread.Sleep(25);
+                SMU.Status statusmp1 = SetTDCVDDLimitMP1(9999);
+                Thread.Sleep(25);
 
-                if (status == SMU.Status.OK)
+                if (statusmp1 == SMU.Status.OK || status == SMU.Status.OK)
                 {
                     status = RefreshPowerTable();
                     if (status == SMU.Status.OK)
                     {
-                        int maxtdc = powerTable.TDC;
-                        SetTDCVDDLimit(_tdc);
-                        return maxtdc;
+                        ret_tdc = powerTable.TDC;
                     }
-                    else return -2;
+                    else ret_tdc = -2;
                 }
-                else return -3;
+                else ret_tdc = -3;
+
+                SetTDCVDDLimit(_tdc);
+                Thread.Sleep(25);
+                SetTDCVDDLimitMP1(_tdc);
             }
-            else return -4;
+            else ret_tdc = -4;
+
+            return ret_tdc;
         }
 
         public int GetMaxEDCLimit()
         {
+            int ret_edc;
+
             if (!info.EDCSupported) return 0;
 
-            if (smu.Rsmu.SMU_MSG_SetEDCVDDLimit == 0x0) return -1;
+            if (smu.Rsmu.SMU_MSG_SetEDCVDDLimit == 0x0 && smu.Mp1Smu.SMU_MSG_SetEDCVDDLimit == 0x0) return -1;
 
             SMU.Status status = RefreshPowerTable();
+            Thread.Sleep(25);
 
             if (status == SMU.Status.OK && powerTable.EDC > 0)
             {
                 uint _edc = (uint)powerTable.EDC;
 
                 status = SetEDCVDDLimit(9999);
+                Thread.Sleep(25);
+                SMU.Status statusmp1 = SetEDCVDDLimitMP1(9999);
+                Thread.Sleep(25);
 
-                if (status == SMU.Status.OK)
+                if (statusmp1 == SMU.Status.OK || status == SMU.Status.OK)
                 {
                     status = RefreshPowerTable();
                     if (status == SMU.Status.OK)
                     {
-                        int maxedc = powerTable.EDC;
-                        SetEDCVDDLimit(_edc);
-                        return maxedc;
+                        ret_edc = powerTable.EDC;
                     }
-                    else return -2;
+                    else ret_edc = -2;
                 }
-                else return -3;
+                else ret_edc = -3;
+
+                Thread.Sleep(25);
+                SetEDCVDDLimit(_edc);
+                Thread.Sleep(25);
+                SetEDCVDDLimitMP1(_edc);
             }
-            else return -4;
+            else ret_edc = -4;
+
+            return ret_edc;
         }
 
         public int GetMaxTHMLimit()
         {
+            int ret_thm;
+
             if (!info.THMSupported) return 0;
 
             if (smu.Rsmu.SMU_MSG_SetHTCLimit == 0x0 && smu.Mp1Smu.SMU_MSG_SetHTCLimit == 0x0) return -1;
@@ -956,29 +1103,28 @@ namespace ZenStates.Core
                 Thread.Sleep(25);
 
                 if (statusmp1 == SMU.Status.OK || status == SMU.Status.OK)
-                //if (status == SMU.Status.OK)
                 {
                     status = RefreshPowerTable();
                     if (status == SMU.Status.OK)
                     {
-                        int maxthm = powerTable.THM;
-                        Thread.Sleep(25);
-                        SetHTCLimit(_thm);
-                        Thread.Sleep(25);
-                        SetHTCLimitMP1(_thm);
-                        return maxthm;
+                        ret_thm = powerTable.THM;                        
                     }
-                    else return -2;
+                    else ret_thm = -2;
                 }
-                else return -3;
+                else ret_thm = -3;
+
+                Thread.Sleep(25);
+                SetHTCLimit(_thm);
+                Thread.Sleep(25);
+                SetHTCLimitMP1(_thm);
             }
-            else return -4;
+            else ret_thm = - 4;
+
+            return ret_thm;
         }
 
         public int GetMaxBoostLimit()
         {
-            if (smu.Hsmp.ReadBoostLimit == 0x0) return 0;
-
             uint _boost = (uint)GetBoostLimit(0);
 
             if (_boost > 0)
@@ -995,6 +1141,7 @@ namespace ZenStates.Core
             }
             else return 0;
         }
+
         public bool SendTestMessage(uint arg = 1, Mailbox mbox = null)
         {
             var cmd = new SMUCommands.SendTestMessage(smu, mbox);
@@ -1015,17 +1162,22 @@ namespace ZenStates.Core
         }
         public bool GetLN2Mode() => new SMUCommands.GetLN2Mode(smu).Execute().args[0] == 1;
         public SMU.Status SetPPTLimit(uint arg = 0U) => new SMUCommands.SetSmuLimit(smu).Execute(smu.Rsmu.SMU_MSG_SetPPTLimit, arg).status;
+        public SMU.Status SetPPTLimitMP1(uint arg = 0U) => new SMUCommands.SetSmuLimitMP1(smu).Execute(smu.Mp1Smu.SMU_MSG_SetPPTLimit, arg).status;
         public SMU.Status SetEDCVDDLimit(uint arg = 0U) => new SMUCommands.SetSmuLimit(smu).Execute(smu.Rsmu.SMU_MSG_SetEDCVDDLimit, arg).status;
+        public SMU.Status SetEDCVDDLimitMP1(uint arg = 0U) => new SMUCommands.SetSmuLimitMP1(smu).Execute(smu.Mp1Smu.SMU_MSG_SetEDCVDDLimit, arg).status;
         public SMU.Status SetEDCSOCLimit(uint arg = 0U) => new SMUCommands.SetSmuLimit(smu).Execute(smu.Rsmu.SMU_MSG_SetEDCSOCLimit, arg).status;
+        public SMU.Status SetEDCSOCLimitMP1(uint arg = 0U) => new SMUCommands.SetSmuLimitMP1(smu).Execute(smu.Mp1Smu.SMU_MSG_SetEDCSOCLimit, arg).status;
         public SMU.Status SetTDCVDDLimit(uint arg = 0U) => new SMUCommands.SetSmuLimit(smu).Execute(smu.Rsmu.SMU_MSG_SetTDCVDDLimit, arg).status;
+        public SMU.Status SetTDCVDDLimitMP1(uint arg = 0U) => new SMUCommands.SetSmuLimitMP1(smu).Execute(smu.Mp1Smu.SMU_MSG_SetTDCVDDLimit, arg).status;
         public SMU.Status SetTDCSOCLimit(uint arg = 0U) => new SMUCommands.SetSmuLimit(smu).Execute(smu.Rsmu.SMU_MSG_SetTDCSOCLimit, arg).status;
-		public SMU.Status SetOverclockCpuVid(byte arg) => new SMUCommands.SetOverclockCpuVid(smu).Execute(arg).status;
-        public SMU.Status SetHTCLimit(uint arg = 0U) => new SMUCommands.SetHTCLimit(smu).Execute(smu.Rsmu.SMU_MSG_SetHTCLimit, arg).status;
+        public SMU.Status SetTDCSOCLimitMP1(uint arg = 0U) => new SMUCommands.SetSmuLimitMP1(smu).Execute(smu.Mp1Smu.SMU_MSG_SetTDCSOCLimit, arg).status;
+        public SMU.Status SetOverclockCpuVid(byte arg) => new SMUCommands.SetOverclockCpuVid(smu).Execute(arg).status;
+        public SMU.Status SetHTCLimit(uint arg = 0U) => new SMUCommands.SetHTCLimit(smu).Execute(smu.Rsmu.SMU_MSG_SetHTCLimit, arg).status; 
         public SMU.Status SetHTCLimitMP1(uint arg = 0U) => new SMUCommands.SetMp1HTCLimit(smu).Execute(smu.Mp1Smu.SMU_MSG_SetHTCLimit, arg).status;
         public SMU.Status SetBoostLimit(uint arg = 0U) => new SMUCommands.SetBoostLimit(smu).Execute(smu.Hsmp.WriteBoostLimit, arg).status;
         public SMU.Status SetBoostLimitAllCore(uint arg = 0U) => new SMUCommands.SetBoostLimit(smu).Execute(smu.Hsmp.WriteBoostLimitAllCores, arg).status;
-        public SMU.Status EnableOcMode() => new SMUCommands.SetOcMode(smu).Execute(true).status;
-        public SMU.Status DisableOcMode() => new SMUCommands.SetOcMode(smu).Execute(false).status;
+        public SMU.Status EnableOcMode() => new SMUCommands.SetOcMode(smu).Execute(true, systemInfo.CodeName).status;
+        public SMU.Status DisableOcMode() => new SMUCommands.SetOcMode(smu).Execute(false, systemInfo.CodeName).status;
         public SMU.Status SetPBOScalar(uint scalar) => new SMUCommands.SetPBOScalar(smu).Execute(scalar).status;
         public SMU.Status RefreshPowerTable() => powerTable != null ? powerTable.Refresh() : SMU.Status.FAILED;
         public int? GetPsmMarginSingleCore(uint coreMask)
@@ -1037,7 +1189,7 @@ namespace ZenStates.Core
         public bool SetPsmMarginAllCores(int margin) => new SMUCommands.SetPsmMarginAllCores(smu).Execute(margin).Success;
         public bool SetPsmMarginSingleCore(uint coreMask, int margin) => new SMUCommands.SetPsmMarginSingleCore(smu).Execute(coreMask, margin).Success;
         public bool SetPsmMarginSingleCore(uint core, uint ccd, uint ccx, int margin) => SetPsmMarginSingleCore(MakeCoreMask(core, ccd, ccx), margin);
-        public bool SetBoostLimitSingleCore(uint coreId, uint frequency) => new SMUCommands.SetBoostLimitPerCore(smu).Execute(info.topology.cores2apicId[coreId], frequency).Success;
+        public bool SetBoostLimitSingleCore(uint coreId, uint frequency) => new SMUCommands.SetBoostLimitPerCore(smu).Execute(GetApicId(coreId), frequency).Success;
         public bool SetFrequencyAllCore(uint frequency) => new SMUCommands.SetFrequencyAllCore(smu).Execute(frequency).Success;
         public bool SetFrequencySingleCore(uint coreMask, uint frequency) => new SMUCommands.SetFrequencySingleCore(smu).Execute(coreMask, frequency).Success;
         public bool SetFrequencySingleCore(uint core, uint ccd, uint ccx, uint frequency) => SetFrequencySingleCore(MakeCoreMask(core, ccd, ccx), frequency);
@@ -1261,7 +1413,15 @@ namespace ZenStates.Core
 
             return null;
         }
-        
+
+        public void EnableTopologyExtensions()
+        {
+            uint ctlEax, ctlEdx;
+            Ring0.Rdmsr(Constants.MSR_CPUID_EXTFEATURES, out ctlEax, out ctlEdx);
+            ctlEax = Utils.SetBits(ctlEax, 54, 1, 1);
+            Ring0.Wrmsr(Constants.MSR_CPUID_EXTFEATURES, ctlEax, ctlEdx);
+        }
+
         protected virtual void Dispose(bool disposing)
         {
             if (!disposedValue)

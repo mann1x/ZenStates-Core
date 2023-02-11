@@ -5,12 +5,18 @@
         public SetOcMode(SMU smu) : base(smu) { }
 
         // TODO: Set OC vid based on current PState0 VID
-        public CmdResult Execute(bool enabled, uint arg = 0U)
+        public CmdResult Execute(bool enabled, string codeName, uint arg = 0U)
         {
             if (CanExecute())
             {
                 uint cmd = enabled ? smu.Rsmu.SMU_MSG_EnableOcMode : smu.Rsmu.SMU_MSG_DisableOcMode;
                 result.args[0] = arg;
+
+                if (codeName == "Raphael")
+                {
+                    result.args[1] = 0;
+                    result.args[2] = arg;
+                }
 
                 if (cmd != 0)
                     result.status = smu.SendRsmuCommand(cmd, ref result.args);

@@ -288,8 +288,7 @@ namespace ZenStates.Core
 
         private void ParseTable(float[] pt)
         {
-            if (pt == null)
-                return;
+            if (pt == null) return;
 
             float bclkCorrection = 1.0f;
             double? bclk = mmio.GetBclk();
