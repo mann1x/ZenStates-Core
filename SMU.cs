@@ -54,13 +54,10 @@ namespace ZenStates.Core
 
             Rsmu = new RSMUMailbox();
             Mp1Smu = new MP1Mailbox();
-            Hsmp = new HSMPMailbox();
+            Hsmp = new HSMPMailbox(this);
         }
 
         public uint Version { get; set; }
-
-        public uint hsmpVersion { get; set; }
-
 
         public uint TableVersion { get; set; }
         //public bool ManualOverclockSupported { get; protected set; }
@@ -173,7 +170,12 @@ namespace ZenStates.Core
 
         public Status SendMp1Command(uint msg, ref uint[] args) => SendSmuCommand(Mp1Smu, msg, ref args);
         public Status SendRsmuCommand(uint msg, ref uint[] args) => SendSmuCommand(Rsmu, msg, ref args);
-        public Status SendHsmpCommand(uint msg, ref uint[] args) => SendSmuCommand(Hsmp, msg, ref args);
+        public Status SendHsmpCommand(uint msg, ref uint[] args)
+        {
+            if (Hsmp.IsSupported && msg <= Hsmp.HighestSupportedFunction)
+                return SendSmuCommand(Hsmp, msg, ref args);
+            return Status.UNKNOWN_CMD;
+        }
     }
 
     public class BristolRidgeSettings : SMU
@@ -240,6 +242,7 @@ namespace ZenStates.Core
             Rsmu.SMU_MSG_SetOverclockFrequencyAllCores = 0x6C;
             Rsmu.SMU_MSG_SetOverclockFrequencyPerCore = 0x6D;
             Rsmu.SMU_MSG_SetOverclockCpuVid = 0x6E;
+            Rsmu.SMU_MSG_GetCurrentOCMode = 0x6F;
 
             Rsmu.SMU_MSG_SetPPTLimit = 0x64; // ?
             Rsmu.SMU_MSG_SetTDCVDDLimit = 0x65; // ?
@@ -318,6 +321,7 @@ namespace ZenStates.Core
             Rsmu.SMU_MSG_SetPBOScalar = 0x58;
             Rsmu.SMU_MSG_GetPBOScalar = 0x6C;
             Rsmu.SMU_MSG_ReadBoostLimit = 0x6E;
+            Rsmu.SMU_MSG_SetVDDCRSOC = 0x14;
 
             // MP1
             Mp1Smu.SMU_ADDR_MSG = 0x3B10530;

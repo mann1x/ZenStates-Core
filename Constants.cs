@@ -29,6 +29,8 @@ namespace ZenStates.Core
         internal const uint MSR_MPERF = 0x000000E7;
         internal const uint MSR_APERF = 0x000000E8;
         internal const uint MSR_APIC_BAR = 0x0000001B;
+        internal const int DEFAULT_MAILBOX_ARGS = 6;
+        internal const int HSMP_MAILBOX_ARGS = 8;
 
     }
 }

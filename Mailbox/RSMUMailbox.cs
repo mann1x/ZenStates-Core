@@ -46,6 +46,8 @@
         public uint SMU_MSG_GetCurrentLCLKMinMax { get; set; } = 0x0;
         public uint SMU_MSG_IsEXPOProfileApplied { get; set; } = 0x0;
         public uint SMU_MSG_ApplyEXPOProfile { get; set; } = 0x0;
+        public uint SMU_MSG_SetVDDCRSOC { get; set; } = 0x0;
+        public uint SMU_MSG_GetCurrentOCMode { get; set; } = 0x0;
 
     }
 }

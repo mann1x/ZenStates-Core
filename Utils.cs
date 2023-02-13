@@ -1,6 +1,5 @@
 using System;
 using System.Runtime.InteropServices;
-using ZenStates.Core.SMUCommands;
 
 namespace ZenStates.Core
 {
@@ -80,14 +79,10 @@ namespace ZenStates.Core
 
         public static bool AllZero(float[] arr) => CheckAllZero(ref arr);
 
-        public static uint[] MakeCmdArgs(uint[] args)
+        public static uint[] MakeCmdArgs(uint[] args, int maxArgs = Constants.DEFAULT_MAILBOX_ARGS)
         {
-            int maxargs = args.Length > 6 ? 8 : 6;
-            uint[] cmdArgs = new uint[maxargs];
-            int length = args.Length > maxargs ? maxargs : args.Length;
-
-            for (int i = 0; i < maxargs; ++i)
-                cmdArgs[i] = 0;
+            uint[] cmdArgs = new uint[maxArgs];
+            int length = Math.Min(maxArgs, args.Length);
 
             for (int i = 0; i < length; i++)
                 cmdArgs[i] = args[i];
@@ -95,9 +90,9 @@ namespace ZenStates.Core
             return cmdArgs;
         }
 
-        public static uint[] MakeCmdArgs(uint arg = 0)
+        public static uint[] MakeCmdArgs(uint arg = 0, int maxArgs = Constants.DEFAULT_MAILBOX_ARGS)
         {
-            return MakeCmdArgs(new uint[] { arg });
+            return MakeCmdArgs(new uint[] { arg }, maxArgs);
         }
 
         // CO margin range seems to be from -30 to 30
