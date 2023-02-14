@@ -19,13 +19,11 @@ namespace ZenStates.Core
         private static ulong bitmask0 = (1 << 0);
         private GroupAffinity cpu0Affinity = new GroupAffinity(group0, bitmask0);
 
-        public float ccd1Temp { get; private set; }
-        public float ccd2Temp { get; private set; }
-        public bool ccd1TempSupported { get; private set; }
-        public bool ccd2TempSupported { get; private set; }
-        public float cpuTemp { get; private set; }
-        public float cpuVcore { get; private set; }
-        public float cpuVsoc { get; private set; }
+        public float? ccd1Temp { get; private set; }
+        public float? ccd2Temp { get; private set; }
+        public float? cpuTemp { get; private set; }
+        public float? cpuVcore { get; private set; }
+        public float? cpuVsoc { get; private set; }
         public float cpuBusClock { get; private set; }
 
         public string teststring { get; private set; }
@@ -96,14 +94,17 @@ namespace ZenStates.Core
             public uint ccds;
             public uint ccxs;
             public uint coresPerCcx;
+            public uint ccxPerCcd;
             public uint cores;
             public uint logicalCores;
             public uint physicalCores;
             public uint threadsPerCore;
+            public uint enabledCores;
             public uint cpuNodes;
             public uint coreDisableMap;
             public uint coreEnabledMap;
             public uint coreLayout;
+            public uint coreLayoutInit;
             public uint[] coreMap;
             public uint[] performanceOfCore;
             public uint[] logical2apicIds;
@@ -167,6 +168,10 @@ namespace ZenStates.Core
                 else
                     topology.cores = topology.logicalCores / topology.threadsPerCore;
 
+                if (Opcode.Cpuid(0x80000008, 0, out eax, out ebx, out ecx, out edx))
+                {
+                    topology.enabledCores = (Utils.GetBits(ecx, 0, 8) + 1) / topology.threadsPerCore;
+                }
             }
             else
             {
@@ -233,12 +238,12 @@ namespace ZenStates.Core
 
                 fuseRead = true;
             }
-                
+
             #region Phase3
-            
+
+            topology.ccxPerCcd = ccxPerCcd;
             topology.coreEnabledMap = 0x00000000;
-            topology.coreLayout = 0x00000000;
-            topology.coreCcxMap = new uint[topology.physicalCores, 6];
+            topology.coreLayoutInit = 0x00000000;
             topology.coreFullMap = new uint[topology.cores, 3];
 
             try
@@ -249,15 +254,17 @@ namespace ZenStates.Core
 
                 Process Proc = Process.GetCurrentProcess();
                 IntPtr _systemAffinity = Proc.ProcessorAffinity;
+
                 uint apicIdSharedId = uint.MaxValue, prevApicIdSharedId = uint.MaxValue;
-                uint numSharingCache = 0, ccxSharing = 1, numSharingCacheId = uint.MaxValue, prevNumSharingCacheId = uint.MaxValue;
-                uint coreId = 0, _logicalCoreId = 0, logical2apicId = 0;
+                uint numSharingCache = 0, numSharingCacheLog2 = 0, ccxSharing = 1, numSharingCacheId = uint.MaxValue, prevNumSharingCacheId = uint.MaxValue;
+                uint coreId = 0, _logicalCoreId = 0, _logicalCoreIdLog2 = 0, logical2apicId = 0;
+
+                topology.coreCcxMap = new uint[topology.enabledCores, 8];
 
                 for (int i = 0; i < topology.logicalCores; i++)
                 {
                     ulong bitmask = (ulong)1 << i;
                     Proc.ProcessorAffinity = (IntPtr)bitmask;
-
 
                     foreach (ProcessThread thrd in Proc.Threads)
                     {
@@ -271,7 +278,8 @@ namespace ZenStates.Core
                     // numSharingCache
                     if (Opcode.Cpuid(0x8000001D, 3, out eax, out ebx, out ecx, out edx))
                         numSharingCache = Utils.GetBits(eax, 14, 12);
-                    numSharingCache = topology.threadsPerCore > 1 ? numSharingCache + 1 : (numSharingCache * 2) + 1;
+
+                    numSharingCacheLog2 = (8 / ccxPerCcd) * topology.threadsPerCore;
 
                     // CoreId
                     if (Opcode.Cpuid(0x8000001E, 0, out eax, out ebx, out ecx, out edx))
@@ -280,28 +288,34 @@ namespace ZenStates.Core
                     topology.logical2apicIds[i] = logical2apicId;
 
                     apicIdSharedId = logical2apicId >> (int)Math.Log(topology.threadsPerCore, 2);
-
-                    numSharingCacheId = (uint)_logicalCoreId >> (int)Math.Log(numSharingCache, 2);
+                    
+                    numSharingCacheId = _logicalCoreId >> (int)Math.Log(numSharingCacheLog2, 2);
 
                     prevNumSharingCacheId = prevNumSharingCacheId == uint.MaxValue ? numSharingCacheId : prevNumSharingCacheId;
 
                     if (numSharingCacheId != prevNumSharingCacheId)
+                    {
                         ccxSharing++;
+                    }
 
                     if (apicIdSharedId != prevApicIdSharedId)
                     {
                         topology.coreIds[coreId] = _logicalCoreId;
                         topology.cores2apicId[coreId] = logical2apicId;
+
                         topology.coreCcxMap[coreId, 0] = 1;
                         topology.coreCcxMap[coreId, 1] = ccxSharing;
-                        topology.coreCcxMap[coreId, 2] = _logicalCoreId;
+                        topology.coreCcxMap[coreId, 2] = (uint)_logicalCoreId;
                         topology.coreCcxMap[coreId, 3] = numSharingCache;
                         topology.coreCcxMap[coreId, 4] = numSharingCacheId;
                         topology.coreCcxMap[coreId, 5] = prevNumSharingCacheId;
+                        topology.coreCcxMap[coreId, 6] = _logicalCoreIdLog2;
+                        topology.coreCcxMap[coreId, 7] = numSharingCacheLog2;
                         coreId++;
+
+                        prevNumSharingCacheId = numSharingCacheId;
                     }
 
-                    prevNumSharingCacheId = numSharingCacheId;
                     prevApicIdSharedId = apicIdSharedId;
                 }
 
@@ -332,6 +346,7 @@ namespace ZenStates.Core
                     uint xbit, ccxSharing, ccxSharingPrev = 1;
                     int p = 0, enabledOffset = 0;
                     int ccd = 1;
+                    bool psmCheck;
 
                     for (int i = 0; i < topology.coreCcxMap.GetLength(0); ++i)
                     {
@@ -370,26 +385,22 @@ namespace ZenStates.Core
                                 {
                                     uint ebit = Utils.GetBits(_coreEnabledMap, b, 1);
                                     uint dbit = Utils.GetBits(_coreDisableMap, b, 1);
-                                    if (dbit == 1) { topology.coreLayout |= (uint)0 << p; p++; }
-                                    topology.coreLayout |= (uint)ebit << p;
+                                    if (dbit == 1) { topology.coreLayoutInit |= (uint)0 << p; p++; }
+                                    topology.coreLayoutInit |= (uint)ebit << p;
                                     if (ebit == 1)
                                     {
                                         topology.coreFullMap[_CoreIndex, 0] = (uint)p;
-                                        topology.coreFullMap[_CoreIndex, 1] = topology.coreCcxMap[_CoreIndex, 1];
+                                        topology.coreFullMap[_CoreIndex, 1] = (uint)(topology.coreCcxMap[_CoreIndex, 1] - (i * ccxPerCcd));
                                         topology.coreFullMap[_CoreIndex, 2] = (uint)i+1;
                                         _CoreIndex++;
                                     }
                                 }
-
                             }
                             else
                                 Console.WriteLine($"Could not read core fuse for CCD{i}!");
-
                         }
                         ccdOffset += 0x2000000;
                     }
-
-
                 }
                 catch (Exception ex)
                 {
@@ -398,8 +409,8 @@ namespace ZenStates.Core
 
                 try
                 {
-                    topology.coreMap = new uint[Utils.CountSetBits(~topology.coreLayout)];
-                    uint _coreMap = topology.coreLayout;
+                    topology.coreMap = new uint[Utils.CountSetBits(~topology.coreLayoutInit)];
+                    uint _coreMap = topology.coreLayoutInit;
 
                     for (uint i = 0, k = 0; i < topology.physicalCores; _coreMap = _coreMap >> 1)
                     { if ((_coreMap & 1) == 1) topology.coreMap[k++] = i; i++; }
@@ -462,6 +473,7 @@ namespace ZenStates.Core
                 smu = GetMaintainedSettings.GetByType(info.codeName);
                 smu.Version = GetSmuVersion();
                 smu.TableVersion = GetTableVersion();
+                smu.Hsmp.Init(this);
             }
             else
             {
@@ -474,6 +486,7 @@ namespace ZenStates.Core
             try
             {
                 info.topology = GetCpuTopology(info.family, info.codeName, info.model);
+                info.topology.coreLayout = CheckCoreLayout(info.topology.coreLayoutInit);
             }
             catch (Exception ex)
             {
@@ -506,13 +519,11 @@ namespace ZenStates.Core
                 Status = IOModule.LibStatus.PARTIALLY_OK;
             }
 
-            ccd1Temp = 0;
-            ccd2Temp = 0;
-            ccd1TempSupported = false;
-            ccd2TempSupported = false;
-            cpuTemp = 0;
-            cpuVcore = 0;
-            cpuVsoc = 0;
+            ccd1Temp = null;
+            ccd2Temp = null;
+            cpuTemp = null;
+            cpuVcore = null;
+            cpuVsoc = null;
             cpuBusClock = 0;
             info.cppcMSR = false;
 
@@ -595,6 +606,70 @@ namespace ZenStates.Core
             return data;
         }
 
+        public bool IsValidPsmCheck(int coreIndex)
+        {
+            SMUCommands.CmdResult result;
+            bool psmCheck = false;
+
+            int highlimit = 30;
+            int lowlimit = info.codeName == CodeName.Raphael ? -16959 : -30;
+
+            for (int r = 0; r < 10; r++)
+            {
+                if (r > 0) Thread.Sleep(10);
+                result = new SMUCommands.GetPsmMarginSingleCore(smu).Execute(GetCoreMask(coreIndex));
+                if (result.status == SMU.Status.FAILED) { psmCheck = false; r = 10; }
+                if (result.status == SMU.Status.OK)
+                {
+                    psmCheck = (int)result.args[0] > highlimit || (int)result.args[0] < lowlimit ? false : true;
+                    r = 10;
+                }
+            }
+
+            return psmCheck;
+        }
+        public uint CheckCoreLayout(uint oldCoreLayout)
+        {
+            try 
+            {
+                if (info.codeName != CodeName.Raphael) return oldCoreLayout;
+
+                uint newCoreLayout = 0;
+                uint setbit;
+
+                for (int ccd = 0; ccd < info.topology.ccds; ccd++)
+                {
+                    int p = 0;
+                    bool psmCheck = false;
+
+                    uint _oldCoreLayout = (oldCoreLayout >> ccd * 8) & 0xff;
+
+                    for (int i = 0; i < 8; _oldCoreLayout >>= 1, ++i)
+                    {
+                        setbit = (_oldCoreLayout & 1) == 1 ? (uint)1 : 0;
+
+                        if (setbit == 1)
+                        {
+                            while (true)
+                            {
+                                psmCheck = IsValidPsmCheck(p + (ccd * 8));
+                                if (psmCheck) break;
+                                p++;
+                            }
+                        }
+                        newCoreLayout |= (uint)setbit << p + (ccd * 8);
+                        p++;
+                        i = p < 8 ? i : 8;
+                    }
+
+                }
+                return newCoreLayout;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
         public bool WriteDwordEx(uint addr, uint data)
         {
             bool res = false;
@@ -930,7 +1005,7 @@ namespace ZenStates.Core
         {
             int ret_ppt = 0;
 
-            if (smu.Hsmp.ReadMaxSocketPowerLimit != 0x0)
+            if (smu.Hsmp.ReadMaxSocketPowerLimit != 0x0 && smu.Hsmp.IsSupported)
             {
                 var cmd = new SMUCommands.GetMaxPPTLimit(smu);
                 cmd.Execute();
@@ -945,7 +1020,7 @@ namespace ZenStates.Core
                 }
             }
 
-            if (!info.PPTSupported && ret_ppt < 1) return 0;
+            if (!info.PPTSupported && ret_ppt < 1) return ret_ppt;
 
             if (smu.Rsmu.SMU_MSG_SetPPTLimit == 0x0 && smu.Mp1Smu.SMU_MSG_SetPPTLimit == 0x0 && ret_ppt < 1) return -1;
 
@@ -995,7 +1070,8 @@ namespace ZenStates.Core
 
         public int GetPPTLimit()
         {
-            if (smu.Hsmp.ReadSocketPowerLimit != 0x0) { 
+            if (smu.Hsmp.ReadMaxSocketPowerLimit != 0x0 && smu.Hsmp.IsSupported) 
+            { 
                 var cmd = new SMUCommands.GetPPTLimit(smu);
                 cmd.Execute();
                 if (cmd.PPT > 0) return cmd.PPT;
@@ -1328,12 +1404,10 @@ namespace ZenStates.Core
                         if (ccdRawTemp > 0 && ccdTemp < 125) // Zen 2 reports 95 degrees C max, but it might exceed that.
                         {
                             ccd1Temp = ccdTemp;
-                            ccd1TempSupported = true;
                         }
                         else
                         {
-                            ccd1Temp = 0;
-                            ccd1TempSupported = false;
+                            ccd1Temp = null;
                         }
                     }
                     if (ccd == 1)
@@ -1341,12 +1415,10 @@ namespace ZenStates.Core
                         if (ccdRawTemp > 0 && ccdTemp < 125) // Zen 2 reports 95 degrees C max, but it might exceed that.
                         {
                             ccd2Temp = ccdTemp;
-                            ccd2TempSupported = true;
                         }
                         else
                         {
-                            ccd2Temp = 0;
-                            ccd2TempSupported = false;
+                            ccd2Temp = null;
                         }
                     }
                 }
@@ -1381,11 +1453,15 @@ namespace ZenStates.Core
                 else if (info.cpuName.Contains("Threadripper 19") || info.cpuName.Contains("Threadripper 29"))
                     offset = -27.0f;
 
-                float t = temperature * 0.001f;
-                if (tempOffsetFlag)
-                    t += -49.0f;
+                if (temperature > 0)
+                {
+                    float t = temperature * 0.001f;
+                    if (tempOffsetFlag)
+                        t += -49.0f;
 
-                cpuTemp = offset < 0 ? t + offset : t;
+                    cpuTemp = offset < 0 ? t + offset : t;
+                }
+
 
                 const double vidStep = 0.00625;
                 double vcc;
@@ -1400,7 +1476,7 @@ namespace ZenStates.Core
                 }
                 else
                 {
-                    cpuVcore = 0;
+                    cpuVcore = null;
                 }
 
                 // SoC (0x02)
@@ -1412,7 +1488,7 @@ namespace ZenStates.Core
                 }
                 else
                 {
-                    cpuVsoc = 0;
+                    cpuVsoc = null;
                 }
 
             }
