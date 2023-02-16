@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Threading;
 using ZenStates.Core.SMUCommands;
 
@@ -583,11 +584,15 @@ namespace ZenStates.Core
         public bool ReadDwordEx(uint addr, ref uint data)
         {
             bool res = false;
-            if (Ring0.WaitPciBusMutex(10))
+            for (int retries = 10; retries > 0; retries--)
             {
-                if (Ring0.WritePciConfig(smu.SMU_PCI_ADDR, smu.SMU_OFFSET_ADDR, addr))
-                    res = Ring0.ReadPciConfig(smu.SMU_PCI_ADDR, smu.SMU_OFFSET_DATA, out data);
-                Ring0.ReleasePciBusMutex();
+                if (Ring0.WaitPciBusMutex(10))
+                {
+                    if (Ring0.WritePciConfig(smu.SMU_PCI_ADDR, smu.SMU_OFFSET_ADDR, addr))
+                        res = Ring0.ReadPciConfig(smu.SMU_PCI_ADDR, smu.SMU_OFFSET_DATA, out data);
+                    Ring0.ReleasePciBusMutex();
+                }
+                retries = res ? 0 : retries;
             }
             return res;
         }
@@ -595,12 +600,17 @@ namespace ZenStates.Core
         public uint ReadDword(uint addr)
         {
             uint data = 0;
+            bool bwrite = false, bread = false;
 
-            if (Ring0.WaitPciBusMutex(10))
+            for (int retries = 10; retries > 0; retries--)
             {
-                Ring0.WritePciConfig(smu.SMU_PCI_ADDR, (byte)smu.SMU_OFFSET_ADDR, addr);
-                Ring0.ReadPciConfig(smu.SMU_PCI_ADDR, (byte)smu.SMU_OFFSET_DATA, out data);
-                Ring0.ReleasePciBusMutex();
+                if (Ring0.WaitPciBusMutex(10))
+                {
+                    bwrite = Ring0.WritePciConfig(smu.SMU_PCI_ADDR, (byte)smu.SMU_OFFSET_ADDR, addr);
+                    bread = Ring0.ReadPciConfig(smu.SMU_PCI_ADDR, (byte)smu.SMU_OFFSET_DATA, out data);
+                    Ring0.ReleasePciBusMutex();
+                }
+                retries = bwrite && bread ? 0 : retries;
             }
 
             return data;
