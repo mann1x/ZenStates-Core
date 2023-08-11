@@ -347,7 +347,6 @@ namespace ZenStates.Core
                     uint xbit, ccxSharing, ccxSharingPrev = 1;
                     int p = 0, enabledOffset = 0;
                     int ccd = 1;
-                    bool psmCheck;
 
                     for (int i = 0; i < topology.coreCcxMap.GetLength(0); ++i)
                     {
@@ -382,14 +381,21 @@ namespace ZenStates.Core
                                 uint _coreDisableMap = (topology.coreDisableMap >> i * 8) & 0xff;
                                 uint _coreEnabledMap = (topology.coreEnabledMap >> i * 8) & 0xff;
                                 p = i * 8;
+                                int doffset = 0;
                                 for (int b = 0; b < 8; ++b, ++p)
                                 {
                                     uint ebit = Utils.GetBits(_coreEnabledMap, b, 1);
-                                    uint dbit = Utils.GetBits(_coreDisableMap, b, 1);
-                                    if (dbit == 1) { topology.coreLayoutInit |= (uint)0 << p; p++; }
-                                    topology.coreLayoutInit |= (uint)ebit << p;
+                                    uint dbit = Utils.GetBits(_coreDisableMap, (b + doffset), 1);
+                                    uint isDisabled = (ebit & dbit);
+                                    while (isDisabled == 1)
+                                    {
+                                        doffset++; p++;
+                                        dbit = Utils.GetBits(_coreDisableMap, (b + doffset), 1);
+                                        isDisabled = (ebit & dbit);
+                                    }
                                     if (ebit == 1)
                                     {
+                                        topology.coreLayoutInit |= (uint)1 << p;
                                         topology.coreFullMap[_CoreIndex, 0] = (uint)p;
                                         topology.coreFullMap[_CoreIndex, 1] = (uint)(topology.coreCcxMap[_CoreIndex, 1] - (i * ccxPerCcd));
                                         topology.coreFullMap[_CoreIndex, 2] = (uint)i+1;
@@ -488,6 +494,8 @@ namespace ZenStates.Core
             {
                 info.topology = GetCpuTopology(info.family, info.codeName, info.model);
                 info.topology.coreLayout = CheckCoreLayout(info.topology.coreLayoutInit);
+                if (Utils.CountSetBits(info.topology.coreEnabledMap) != Utils.CountSetBits(info.topology.coreLayout))
+                    info.topology.coreLayout = CheckCoreLayout(info.topology.coreLayoutInit);
             }
             catch (Exception ex)
             {
@@ -626,7 +634,7 @@ namespace ZenStates.Core
 
             for (int r = 0; r < 10; r++)
             {
-                if (r > 0) Thread.Sleep(10);
+                Thread.Sleep(15);
                 result = new SMUCommands.GetPsmMarginSingleCore(smu).Execute(GetCoreMask(coreIndex));
                 if (result.status == SMU.Status.FAILED) { psmCheck = false; r = 10; }
                 if (result.status == SMU.Status.OK)
@@ -992,7 +1000,7 @@ namespace ZenStates.Core
                 return false;
             }
 
-            return Equals(GetPBOScalar(), 0.0f);
+            return Equals(GetPBOScalar(), 0);
         }
 
         public int GetPBOScalar()
@@ -1256,6 +1264,65 @@ namespace ZenStates.Core
             else return 0;
         }
 
+        public int GetCpuVoltage()
+        {
+            int voltage = 0;
+            try
+            {
+                uint msr = 0xC0010293;
+                uint eax = default, edx = default;
+
+                if (Ring0.Rdmsr(msr, out eax, out edx) == false)
+                {
+                    return voltage;
+                }
+
+                if (smu.SMU_TYPE == SMU.SmuType.TYPE_CPU4)
+                {
+                    voltage = (int)Utils.VidToVoltageSVI3((eax >> 14 & 0xFF) + 1) * 1000;
+                }
+                else
+                {
+                    voltage = (int)Utils.VidToVoltage(eax >> 14 & 0xFF) * 1000;
+                }
+            }
+            catch { }
+            return voltage;
+        }
+
+        public bool SetCpuVoltage(int voltage, Mailbox mbox = null)
+        {
+            if (smu.Rsmu.SMU_MSG_SetOverclockCpuVid == 0x0 && smu.Mp1Smu.SMU_MSG_SetOverclockCpuVid == 0x0) return false;
+            uint _vid;
+            
+            if (smu.SMU_TYPE == SMU.SmuType.TYPE_CPU4)
+            {
+                _vid = Convert.ToUInt32((decimal)Math.Round((voltage / 1000.0 + 0.245) / -0.005));
+            }
+            else
+            {
+                _vid = Convert.ToUInt32((decimal)Math.Round((voltage / 1000.0 - 1.55) / -0.00625));
+            }
+
+            var cmd = new SMUCommands.SetOverclockCpuVid(smu, mbox);
+            SMUCommands.CmdResult result = cmd.Execute(_vid);
+            return result.Success;
+
+        }
+        public bool SetCpuOcDldoVoltage(int voltage, Mailbox mbox = null)
+        {
+            if ((smu.SMU_TYPE == SMU.SmuType.TYPE_CPU4 || smu.SMU_TYPE == SMU.SmuType.TYPE_CPU3) && smu.Mp1Smu.SMU_MSG_SetDldoPsmMargin != 0)
+            {
+                if (mbox == null ) mbox = smu.Mp1Smu;
+                int margin = (voltage - 900) / 3; 
+                var cmd = new SMUCommands.SetPsmMarginAllCores(smu, mbox);
+                SMUCommands.CmdResult result = cmd.Execute(margin);
+                return result.Success;
+
+            }
+            return false;
+        }
+
         public bool SetPsmSingleCoreId(uint core, int margin)
         {
             return SetPsmMarginSingleCore(GetCoreIdMask(core), margin);
@@ -1310,7 +1377,7 @@ namespace ZenStates.Core
             return result.Success ? (int)result.args[0] : (int?)null;
         }
         public int? GetPsmMarginSingleCore(uint core, uint ccd, uint ccx) => GetPsmMarginSingleCore(MakeCoreMask(core, ccd, ccx));
-        public bool SetPsmMarginAllCores(int margin) => new SMUCommands.SetPsmMarginAllCores(smu).Execute(margin).Success;
+        public bool SetPsmMarginAllCores(int margin, Mailbox mbox = null) => new SMUCommands.SetPsmMarginAllCores(smu).Execute(margin).Success;
         public bool SetPsmMarginSingleCore(uint coreMask, int margin) => new SMUCommands.SetPsmMarginSingleCore(smu).Execute(coreMask, margin).Success;
         public bool SetPsmMarginSingleCore(uint core, uint ccd, uint ccx, int margin) => SetPsmMarginSingleCore(MakeCoreMask(core, ccd, ccx), margin);
         public bool SetBoostLimitSingleCore(uint coreId, uint frequency) => new SMUCommands.SetBoostLimitPerCore(smu).Execute(GetApicId(coreId), frequency).Success;
@@ -1472,34 +1539,33 @@ namespace ZenStates.Core
                     cpuTemp = offset < 0 ? t + offset : t;
                 }
 
-
                 const double vidStep = 0.00625;
                 double vcc;
                 uint svi0PlaneXVddCor;
 
                 // Core (0x01)
-                if ((smuSvi0Tfn & 0x01) == 0)
+                if ((smuSvi0Tfn & 0x01) == 0 &&
+                    (info.codeName == CodeName.Matisse ||
+                    info.codeName == CodeName.Vermeer))
                 {
                     svi0PlaneXVddCor = (smuSvi0TelPlane0 >> 16) & 0xff;
                     vcc = 1.550 - vidStep * svi0PlaneXVddCor;
                     cpuVcore = (float)vcc;
                 }
                 else
-                {
                     cpuVcore = null;
-                }
-
+ 
                 // SoC (0x02)
-                if (info.model == 0x11 || info.model == 0x21 || info.model == 0x71 || info.model == 0x31 || (smuSvi0Tfn & 0x02) == 0)
+                if ((info.model == 0x11 || info.model == 0x21 || info.model == 0x71 || info.model == 0x31 || (smuSvi0Tfn & 0x02) == 0) &&
+                    (info.codeName == CodeName.Matisse ||
+                    info.codeName == CodeName.Vermeer))
                 {
                     svi0PlaneXVddCor = (smuSvi0TelPlane1 >> 16) & 0xff;
                     vcc = 1.550 - vidStep * svi0PlaneXVddCor;
                     cpuVsoc = (float)vcc;
                 }
                 else
-                {
                     cpuVsoc = null;
-                }
 
             }
             return true;

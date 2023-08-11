@@ -6,8 +6,11 @@
     // [15-0] CO margin
     internal class SetPsmMarginAllCores : BaseSMUCommand
     {
-        public SetPsmMarginAllCores(SMU smu) : base(smu) { }
-
+        private readonly Mailbox mbox; 
+        public SetPsmMarginAllCores(SMU smu, Mailbox mbox = null) : base(smu)
+        {
+            this.mbox = mbox ?? smu.Rsmu;
+        }
         public override bool CanExecute()
         {
             return smu.Mp1Smu.SMU_MSG_SetAllDldoPsmMargin > 0 || smu.Rsmu.SMU_MSG_SetAllDldoPsmMargin > 0;
@@ -17,15 +20,13 @@
         {
             if (CanExecute())
             {
+                uint cmd = ReferenceEquals(smu.Rsmu, mbox) ? smu.Rsmu.SMU_MSG_SetAllDldoPsmMargin : smu.Mp1Smu.SMU_MSG_SetAllDldoPsmMargin;
+                if (cmd == 0 && ReferenceEquals(smu.Rsmu, mbox)) cmd = smu.Mp1Smu.SMU_MSG_SetAllDldoPsmMargin;
+                if (cmd == 0 && ReferenceEquals(smu.Mp1Smu, mbox)) cmd = smu.Rsmu.SMU_MSG_SetAllDldoPsmMargin;
+                if (cmd == 0) { result.status = SMU.Status.UNKNOWN_CMD; return result; }
+
                 result.args[0] = Utils.MakePsmMarginArg(margin);
-                if (smu.Mp1Smu.SMU_MSG_SetAllDldoPsmMargin > 0)
-                {
-                    result.status = smu.SendMp1Command(smu.Mp1Smu.SMU_MSG_SetAllDldoPsmMargin, ref result.args);
-                    if (result.status != SMU.Status.OK)
-                        result.status = smu.SendRsmuCommand(smu.Rsmu.SMU_MSG_SetAllDldoPsmMargin, ref result.args);
-                }
-                else
-                    result.status = smu.SendRsmuCommand(smu.Rsmu.SMU_MSG_SetAllDldoPsmMargin, ref result.args);
+                result.status = smu.SendSmuCommand(mbox, cmd, ref result.args);
             }
 
             return base.Execute();
